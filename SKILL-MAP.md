@@ -296,6 +296,27 @@ consequence, state the assumption). Both reviews write to it and board-doc reads
   from the source page and added, not guessed. Per-layer stackup thicknesses are read
   from JLC's page, not copied.
 
+### Before the schematic and after the board: the stage skills
+
+These seven ran only from a local skills folder until 2026-10-23 and now live here. Each
+loads `ee-schematic-rules` (and `layout-constraints` also `ee-layout-rules`) in place
+of the old single house-rules skill; nothing else in them changed beyond dropping one
+org name and adding inner layers to the 6+ layer gerber call.
+
+- **requirements** — interviews the engineer, writes `project.yaml` and
+  `requirements.yaml`; asks the `ee-schematic-rules/references/asks.yaml` questions.
+- **system-architecture** — blocks, part classes, interconnect, `system.yaml`.
+- **power-architecture** — the power tree, rail currents per mode, regulator choice,
+  sequencing, `power_tree.yaml`.
+- **architecture-review** — independent review of `system.yaml` and
+  `power_tree.yaml`, recomputing the budget (`references/rubric.md`).
+- **part-spec** — finds a buyable part per block or rail and writes its part record
+  (`references/part-record-format.md`).
+- **layout-constraints** — stackup, net classes, `.kicad_dru`, critical nets and the
+  placement spec before layout; uses layout-review's DRU cookbook.
+- **release** — preflight (read-only) and, on an explicit instruction naming the
+  revision, the fab package (`references/jlcpcb-package.md`, `scripts/emit_cpl.py`).
+
 ---
 
 ## 3. Bounds and simplicity

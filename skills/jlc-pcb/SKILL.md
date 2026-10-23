@@ -48,5 +48,5 @@ it came from and the date it was read. Read it whenever a number has to fit JLC.
   `../ee-schematic-rules/rules/schematic.md`, review checks E-7/E-8 in schematic-review.
   `jlc.py` uses JLC's unpublished parts endpoint; if it stops answering, fix it, and
   never fall back to a part code from memory.
-- Gerber, drill, BOM and CPL files in JLC's formats: the release skill's
-  `references/jlcpcb-package.md`, when that skill is installed.
+- Gerber, drill, BOM and CPL files in JLC's formats:
+  `../release/references/jlcpcb-package.md`.

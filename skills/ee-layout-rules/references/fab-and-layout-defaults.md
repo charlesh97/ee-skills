@@ -30,7 +30,7 @@ and the HDI and via-current reasoning. The rest of the house's JLC knowledge:
 | Flex (JLC FPC) vias, no impedance control | §1 below; `../rules/drc.json` flex profiles; L-42 |
 | Part lookup: LCSC code, basic or extended, JLC stock | `../../schematic-capture/scripts/jlc.py` (search, code, check); D-46 in `../../ee-schematic-rules/rules/schematic.md` |
 | BOM and part fields graded against JLC at review | schematic-review E-7, E-8 |
-| Gerbers, drill, BOM and CPL in JLC's formats | the release skill's `references/jlcpcb-package.md` (a separate skill) |
+| Gerbers, drill, BOM and CPL in JLC's formats | `../../release/references/jlcpcb-package.md` |
 
 `jlc.py` calls JLC's own parts endpoint, which isn't a published API: if it
 stops answering, fix the script, and never fall back to a part code from
