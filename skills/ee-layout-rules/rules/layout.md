@@ -208,22 +208,21 @@ rather than running on top of each other. A plane layer may carry a short
 signal hop where nothing else gets through, but the router prices it high
 (L-36), and a net's track on a plane stays under 3 mm *(draft)*. A long run on
 the plane cuts the return path of every signal above it. On a signal layer, lanes
-run on its axis, and 45° is for bends and short jogs. Each run (one net's track
-chained end to end on one layer) travels mostly along its layer's axis: *(draft)*
-at least two thirds of its travel, counting a 45 half to each axis. The test is a
-share, not a length, so a long run may neck up to its pin and a short one may not
-wander. Wrong-way travel under three lane pitches is a pin neck and is not
-counted. A wrong-way stretch walls off every right-way lane it crosses; when a
-net has to go the other way, it changes layer. Runs that must break this (a diff
-pair, power copper, a fixed critical path) are named in the routing spec's
-`direction-exceptions:` line. *(draft)* At least 80% of an inner signal layer's
-track length runs on its axis. Outer layers carry parts and pin escapes, so their
-runs are reported but don't fail. `../scripts/check_copper.py --directions`
-grades both; a layer where H, V and 45° are all heavy has no job. A
-router's direction preference is a soft cost, so declare the jobs and grade the
-result; don't assume the router held them. Measured on a 6-layer motor-driver
-board (2026-10-23): at KiCadRoutingTools' default preference cost both inner
-layers came out under 40% on axis with 167 runs failing the share, and about 50 of its
+run on its axis, and 45° is for bends and short jogs. *(draft)* At least 80% of
+each inner signal layer's track length runs in its one fixed direction, with 45s
+counted against it. This holds whatever laid the copper: any autorouter, a route
+table or a hand. A router's direction setting is only a means to it, and none
+holds it on its own, so grade the result. A wrong-way stretch walls off every
+right-way lane it crosses: when a net has to go the other way, it changes layer.
+Copper that must break this (a diff pair, power copper, a fixed critical path)
+is named in the routing spec's `direction-exceptions:` line and left out of the
+share. Outer layers carry parts and pin escapes, so their share is reported but
+doesn't fail. `../scripts/check_copper.py --directions` grades the share and
+lists the runs (one net's track chained end to end on one layer) that travel
+less than two thirds along their layer's axis, as the places to re-lay; a layer
+where H, V and 45° are all heavy has no job. Measured on a 6-layer motor-driver
+board (2026-10-23): with an autorouter's soft direction preference, both inner
+layers came out under 40% on axis with 167 runs mostly off axis, and about 50 of its
 280 signal opens had no clean lane only because of those runs. Avoid needless layer changes, and
 keep vias off pads (except required via-in-pad, L-30) and out of finger fields.
 
