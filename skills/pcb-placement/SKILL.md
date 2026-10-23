@@ -126,7 +126,8 @@ its pin-to-pin map and mis-install grades from `paper-doll` before layout.
 
 Then add the placement rules to the intent, as far as KRT can express them:
 L-10 (decoupling-pin distance), L-11 (hot loops, from the capture's layout
-guidelines), L-12 (zones), L-14 (connectors), and L-15 (test points and debug
+guidelines: switching regulators are placed as cells from the `dcdc-layout`
+skill before seeding, and are fixed for the placer), L-12 (zones), L-14 (connectors), and L-15 (test points and debug
 header). Lock the mechanically fixed parts (`place_pose` set, then lock) before
 seeding, and the fiducials with them (L-17): two in diagonally opposite
 corners and the third in another corner, each as near the edge as the edge

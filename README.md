@@ -20,6 +20,7 @@ is consistent board to board and follows one set of house rules.
 | `schematic-capture` | generative | a brief, or an existing `.kicad_sch` to redraw → `.kicad_sch` drawn to the drawing rules, per-sheet PNG verdicts |
 | `schematic-review` | judgement | `.kicad_sch`, netlist, captures → `findings/schematic-*.yaml` |
 | `pcb-placement` | generative | schematic + mechanical facts → placed `.kicad_pcb` via KiCadRoutingTools, per-block verdicts |
+| `dcdc-layout` | generative + check | a switching regulator laid as a cell from its datasheet figure on a demo board, checked with numbers (`check_regulator.py`), extracted and placed onto the board as a unit (`cell.py`) |
 | `hdi-breakout` | generative | placed `.kicad_pcb` + ball maps + fab via menu → escape and lane budget, breakout plan per part, locked fanout vias, `breakout:` block of the routing spec |
 | `pcb-routing` | generative | placed `.kicad_pcb` + routing spec → routed `.kicad_pcb` via KiCadRoutingTools, per-layer verdicts |
 | `layout-review` | judgement | `.kicad_pcb`, its own `.kicad_dru`, schematic → `findings/layout-*.yaml` |

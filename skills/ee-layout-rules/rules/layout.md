@@ -67,7 +67,19 @@ undoes the choice.
 
 **L-11 Regulator hot loop as the datasheet draws it.** Input cap, switch,
 inductor and output cap go in the layout the capture's layout-guidelines section
-shows, with the loop area kept to a minimum.
+shows, with the loop area kept to a minimum. *(draft, amended 2026-10-23, from a
+6-layer motor-driver board whose three bucks all failed this.)* The hot loop is
+the one whose current switches every cycle: for a buck, the input cap, the VIN
+pin and the GND pin (the `dcdc-layout` skill's `references/topologies.md` lists
+the loop for each topology). Close it on the component layer with no via in it.
+The high-frequency cap sits across its pins, each pad facing its own pin, within
+1.0 mm of the pin's pad edge *(draft)*. Pin vias into the rail and ground planes
+go beside the pads as extras (L-39). A rail shape on an inner layer feeds the
+loop and is never part of it. State the loop area from the copper path, plan plus
+vertical: 2.0 mm² or less on a QFN, SOT or TDFN buck *(draft)*. Lay each switcher
+out as a cell first, from its datasheet figure, with the `dcdc-layout` skill, and
+place the cell before the rest of the board is seeded. A placer clusters caps by
+net, and a router closes loops through whatever plane is there, and both pass DRC.
 
 **L-12 Zone noisy away from quiet.** Switchers, their inductors and switch nodes
 are kept away from sensitive analog, crystals and feedback nodes.
@@ -219,13 +231,31 @@ keep vias off pads (except required via-in-pad, L-30) and out of finger fields.
 
 **L-28 Keep feedback away from the switch node.** The FB trace runs away from the
 SW node and the inductor, and never under the inductor. Switch-node copper is no
-bigger than the current needs.
+bigger than the current needs. *(draft, amended 2026-10-23.)* This covers every
+quiet regulator pin: FB, VOS or SENSE, COMP, and the strap pins (VSET, MODE or
+S-CONF, RT, SS, ILIM). Their parts sit at the pin and return to the IC's quiet
+ground. Past the first 1.0 mm of pin escape, none of these traces runs within
+1.0 mm of switch-node copper on the component layer, or over the inductor's body
+*(draft)*. Layers below the first solid ground plane are shielded and don't count.
+Where the pinout puts the sense pin beside SW, leave the component layer through a
+via inside the escape and come up at the output cap. Size the switch-node copper by
+L-21 from the peak current limit, on one layer, with no vias. Encode it in the
+board's `.kicad_dru` as `via_count (max 0)` on the SW nets and a clearance from FB
+nets to SW. A sense line that taps the output cap as L-44 asks can still fail this
+rule. On one board, a VOS line ran 5 mm beside the SW pad to reach a cap placed on
+the inductor's far side.
 
 **L-29 Heat goes to a plane.** Power and thermal pads connect solid, with no
 thermal relief on a switch node or a high-current pad. Every exposed pad has
 thermal vias to a plane, with count and pitch stated. Junction temperature
 stays ≤ 110 °C at max ambient (the derating rule in `ee-schematic-rules`), from θJA with its board
-condition from the capture.
+condition from the capture. *(draft, 2026-10-23)* Some datasheets (TI's small
+DCS-Control bucks) ask for thermal vias on the SW pin as well. Add them only when
+the thermal budget needs them, and say so in the routing spec, because SW vias add
+switch-node capacitance and put the node on every layer. Otherwise SW has no vias
+(L-28). Exposed-pad vias sit in a paste-free window, or are filled and capped and
+declared (L-30). A pad that carries paste on its whole area has its vias under paste,
+whatever paste windows the footprint also draws.
 
 **L-30 Via-in-pad and HDI only where the pitch needs them.**
 `../references/fab-and-layout-defaults.md` §2 says when. Via-in-pad is filled and
@@ -243,6 +273,25 @@ pad whose paste is split into windows the vias clear (the thermal vias of
 L-29 sit in the paste-free cross); or a bare test pad with no paste.
 `../scripts/check_copper.py` `via-in-pad` grades it: a via in a paste aperture
 fails, one on land copper outside the paste warns.
+
+
+**L-62 Every regulator part returns on the regulator's ground.** *(draft,
+2026-10-23.)* Each input, output and bypass cap's ground pad reaches the
+regulator's ground pin on the same net, through copper on the component layer
+or through a plane of that net directly under it. A ground via that lands on
+another net's plane connects nothing. DRC reports it as one open among hundreds,
+and on one board an output cap sat that way, with its regulator running
+uncapped. Where the datasheet separates analog and power ground (SGND and PGND
+joined at the VCC cap's return, for example), the schematic gives them two nets
+with a net tie at that point. The small-signal parts (FB divider, straps, soft
+start, VCC cap) return to the analog side. A plane split drawn for another power
+stage stays out from under a regulator's SW node and its caps' ground vias.
+`dcdc-layout`'s `check_regulator.py` grades it.
+
+**L-63 Enable and mode pins tied to VIN connect at the input cap.** *(draft,
+2026-10-23.)* Connect them where the datasheet draws the tie, normally at the
+input cap. They carry no current, so they are not power pads for L-39's via count,
+and a routing spec's pad-current table doesn't list them.
 
 **L-31 Fab values Board Setup doesn't hold.** Pad-to-pad on different nets
 0.15 mm (0.10 in a scoped fine-pitch rule). Soldermask bridge 0.10 mm, or 0.13 on
@@ -331,7 +380,10 @@ one before it is done and checked:
    sized by its current (L-21). Draw the edge ground ring with them (L-38).
    Then the pin-via pass: every power and ground pad gets its own via, or as
    many as its current needs, into its plane (L-39), laid by a script or by
-   hand, not by a router pass over the plane nets. A pad outside its rail's
+   hand, not by a router pass over the plane nets. *(2026-10-23)* Switching
+   regulators are laid as cells before this step (L-11, the `dcdc-layout` skill).
+   A rail shape ends at a cell's entry and exit vias and never closes a cell's hot
+   loop, and the pin-via pass skips the cell's pads. A pad outside its rail's
    shape reaches its own via by a track at the rail's class width on a signal
    layer; the plane is not stretched to it. Refill, and confirm the planes are
    whole (L-23) and every power and ground pad is connected (L-35). From here
@@ -471,7 +523,10 @@ pin. Plan the vias at placement: leave room beside every power and ground pad
 for its full count, above all at the decoupling caps and the high-current
 parts. Work in order of current: pulsed and high-current rails (LED drive,
 motor, radio PA, a regulator's input and output caps) get their vias first and
-never go on the exception list. The `power-pin-via` report names the rail for
+never go on the exception list. *(2026-10-23)* A switching regulator's cell is
+the exception to the pass: its hot-loop pads connect on the component layer and its
+vias are part of its layout (L-11), so the pass skips its pads. An EN or MODE pin
+tied to VIN carries no current and needs no via count (L-63). The `power-pin-via` report names the rail for
 each pad, so the highest-current misses get fixed first.
 
 **L-43 Stitch every GND pour, last, as one group.** Every GND pour on every
