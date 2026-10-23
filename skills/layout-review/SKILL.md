@@ -279,6 +279,18 @@ copper.
   Check that SDA and SCL share layers and a continuous GND reference, and
   that each mux channel's pair stays together and uncrossed. The same goes
   for SPI and shared clocks, against their stated topology.
+- **Critical nets (LAY-57 to LAY-60, L-49).** Build the critical-net list
+  yourself from the schematic and the captures, then compare it with the
+  routing spec's `critical-nets:` list: a kind the board has and the list
+  left out is a finding. For each entry, check it was routed deliberately and
+  locked before the bulk pass, and measure what its L-49 line asks: where
+  each Kelvin pair leaves its shunt and how close it runs to a switch node,
+  each gate's loop area and length with its return, the reference caps'
+  distance to their pins, and the converter interface lengths. Render each
+  one.
+- **Planes drawn, not routed (LAY-61, L-36).** List every track on a plane
+  layer by net, and read the routing logs for the layer costs each pass ran
+  with. Router welds show as chains of short segments on the plane nets.
 
 Where the architecture doesn't state a rail's current or a bus's mode, the
 line is `unanswerable`, naming what's missing. Don't assume a figure.

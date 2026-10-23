@@ -5,8 +5,9 @@ description: >
   verify, render, look, and clean up in pcbnew with the interactive router
   through computer use where it is available. Derives the routing spec (power
   widths, diff pairs, impedance, length groups) from the schematic, the
-  datasheet captures and the human, runs KRT's router against it, and fixes
-  what DRC, connectivity and the renders find. Load it for "route the board",
+  datasheet captures and the human; draws the planes, rails and pin vias;
+  routes the critical nets deliberately and locks them; runs KRT's router on
+  the rest; and fixes what DRC, connectivity and the renders find. Load it for "route the board",
   "autoroute", "first pass routing", "route this with KiCadRoutingTools",
   "pour the ground plane", "route the diff pairs", "finish the routing",
   "clean up the routing", or when a board is placed and has no copper yet. It
@@ -55,7 +56,7 @@ errors, vias, minutes). Don't use KRT's own failure tally, which undercounts.
 
 | Outcome | Condition | Then |
 |---|---|---|
-| **Done** | 0 unconnected, 0 copper DRC errors, spec widths met, the planes from the layer plan whole, the edge ground ring in place (L-38), a via on every power pin (L-39), every GND pour stitched as one group (L-43), and clean copper: `check_weird` finds nothing, and `check_copper.py` fails nothing but `via-off-center` (step 3) | hand back |
+| **Done** | 0 unconnected, 0 copper DRC errors, spec widths met, every `critical-nets:` entry routed deliberately, accepted and locked (L-49), no router-drawn copper on a plane layer (L-36), the planes from the layer plan whole, the edge ground ring in place (L-38), a via on every power pin (L-39), every GND pour stitched as one group (L-43), and clean copper: `check_weird` finds nothing, and `check_copper.py` fails nothing but `via-off-center` (step 3) | hand back |
 | **Good enough (the target)** | ≥ 90% routed, **and** 0 shorts or clearance errors in the routed copper, no part moved, no floor loosened | stop, hand back, and ask whether to keep going |
 | **Out of budget** | the budget below is spent and good-enough isn't reached | stop, hand back the best board, and ask |
 | **Needs more layers** | the layer plan, or a congestion diagnosis re-checked with `layer_capacity.py`, says the signal layers can't hold the nets without taking a plane (L-37) | stop, hand back the numbers, and ask: add layers, re-place, or give up the plane knowingly |
@@ -65,7 +66,10 @@ moved part or a loosened floor makes an attempt worse, whatever it does to
 the count. Keep the best board so far, `best.kicad_pcb`, and hand that back,
 not the last one tried.
 
-**Budget** (the defaults; the human can set others in the request):
+**Budget** (the defaults; the human can set others in the request). It is for
+the autorouting steps (step 2's 4 and 5) and cleanup. The planes, the pin vias
+and the critical nets (step 2's 1 and 3) are done properly however long they
+take, and are never cut short to save the budget.
 
 - **1 first pass:** the KRT chain in step 2.
 - **Up to 3 re-route attempts.** One attempt is one diagnosis
@@ -111,7 +115,7 @@ bulk of the work.
    the toolbox, the DONE conditions and the routing traps, and they change
    faster than this skill could track.
 2. Load `ee-layout-rules`, then read `ee-layout-rules/rules/layout.md`: L-01…L-05
-   (setup) and L-20…L-39 and L-43…L-45 (routing), plus L-40…L-42 on flex, are the rules this
+   (setup) and L-20…L-39 and L-43…L-49 (routing), plus L-40…L-42 on flex, are the rules this
    skill routes to.
 3. **The rules are on the board before routing starts.** Run
    `$KPY <ee-skills>/skills/ee-layout-rules/scripts/board_rules.py check <board> --profile rigid|flex`.
@@ -195,9 +199,21 @@ Also:
 - **Length and time groups**, where an interface needs them (from
   `find-high-speed-nets` and the interface spec).
 - **Decide planes before routing** (L-23): the layer plan in 1a does it.
+- **Critical nets** (L-49). Write the `critical-nets:` list into
+  `review/routing/spec.md`: every critical net on the board, not only the
+  ones that cross between blocks. Go through the schematic and the captures
+  for each kind L-49 names (diff pairs, shunt Kelvin sense, gate drive with
+  its return, bootstrap and switch nodes, ADC inputs and reference, ADC and
+  isolator clock and data, clocks and crystals, feedback and sense lines,
+  and whatever a capture's layout guidance names). Each entry gives the net
+  or nets, the rule, the layers and the corridor, and how it will be routed
+  (by hand, or an exact scripted path). Show the list to the human before
+  routing it.
 - **Rough in the planes before any signal routing** (L-23, L-36), and fill
   them. Don't just decide them. Draw the GND and rail zones on the layers the
-  plan gives them, fill them (`pcbnew.ZONE_FILLER`, or `route_planes.py`), and
+  plan gives them, rails as one hand-drawn outline per rail per layer from the
+  power tree, around the pads the rail feeds (not a coarse rectangle per
+  region, which makes the router reach out to the pads it left out), fill them (`pcbnew.ZONE_FILLER`, or `route_planes.py`), and
   only then route. Leave a plane out of a region only where the layer plan (1a)
   makes that layer a routing channel there, and write the region down in the
   spec. A plane added after routing lands as fragments around the tracks.
@@ -255,12 +271,19 @@ Also:
   of the spec, `allow-via-in-pad: U1.33, U4.5`, which `check_copper.py`
   `via-in-pad` reads from `review/routing/spec.md`. Thermal vias in an exposed
   pad's paste-free cross and vias in bare test pads need no entry.
-- **A via for every power and ground pin** (L-39). Each pad on a rail gets its
-  own via to the plane or pour: in the pad, or within `pin_vias.max_track_mm`
-  (1.5 mm) of its own track. Every ground pad gets one too, where the pitch
-  allows. A pad reached only through a same-layer pour, or chained to a
-  neighbour's via, doesn't count. Write down the ground pads that can't take a
-  via, and why. Measured on a 6x8 sensor-array main board (2026-09-29), routed before this rule: 110
+- **A via for every power and ground pin** (L-39). Each pad on a rail, and
+  each ground pad, gets its own via to the plane or pour: one per pin by
+  default, in the pad only as a declared via-in-pad, otherwise adjacent
+  (ring to pad edge ≤ `pin_vias.stub_target_mm`, 0.5 mm, and within
+  `pin_vias.max_track_mm`, 1.5 mm, of its own track) on a stub at least the
+  smaller of the pad's narrow side and `pin_vias.stub_min_width_mm`. A pad
+  reached only through a same-layer pour, or chained to a neighbour's via,
+  doesn't count. Write down the pads that can't take a via, and why (ground
+  and low-current power pads only). List every pulsed or high-current pad
+  with its current and source on a `pad-currents:` block of the spec
+  (`Q1.5 = 6 A (capture)`), and give each `ceil(I / pin_vias.via_amps)` vias:
+  1.5 A takes three 0.6/0.3 vias. The table is in
+  `ee-layout-rules/references/fab-and-layout-defaults.md` §3. Measured on a 6x8 array board (2026-09-29), routed before this rule: 110
   of 207 power pads without their own via, among them all 48 taxel anodes fed
   from an F.Cu bus, and 97 of 111 ground pads reaching GND only through the
   F.Cu pour.
@@ -276,12 +299,14 @@ Also:
     (`--direction-preference-cost`, taken by `route.py` and `route_diff.py`).
     Read its current default in `py_router/routing_defaults.py`, because KRT's
     playbook and code have disagreed on it, and record the value used.
-  - **Plane cost.** Signal steps may hop onto a plane, but it must cost a lot.
-    Pass `--layer-costs` in `--layers` order with the plane high, for example
-    `--layers F.Cu In1.Cu In2.Cu B.Cu --layer-costs 1.0 100 3.0 3.0` *(draft;
-    KRT allows 1–1000)*. `-1` forbids track on a layer outright. Keep that for
-    a layer that must stay solid, such as the plane under a switch node or a
-    diff pair. Record the costs used.
+  - **Plane layers are forbidden** (L-36). Pass `--layer-costs` in
+    `--layers` order with `-1` on every plane layer, GND and rail planes
+    alike, in every KRT step, for example
+    `--layers F.Cu In1.Cu In2.Cu B.Cu --layer-costs 1.0 -1 3.0 3.0`. A high
+    cost (100) is not enough: on a motor-driver board (2026-10-22) KRT still welded
+    GND and the rails with chains of short repair tracks on In1 and In4. Turn
+    KRT's in-run island welding off too (`KICAD_PLANE_FINALIZE=0`). The other
+    costs are yours to set; record them all.
   - Grade both in step 3, rather than trusting the settings.
 - **Floors and sizes** are `ee-layout-rules/rules/drc.json`, which the
   `board_rules.py check` above has confirmed are on the board. Via-in-pad goes
@@ -292,40 +317,45 @@ A two-layer board with no fast interfaces needs only the power-width and plane
 rows. Say so and skip the rest, rather than running every analysis for the
 sake of it.
 
-## 2. First pass — KRT
+## 2. First pass — planes, critical nets, then KRT
 
-Follow KRT's `pcb-free-agent` skill in `route` mode, which never moves a part.
-Its toolbox and traps apply. Its stop rules don't: use the budget in "Success,
+The autorouter is for the bulk, not for the planes or the critical nets (L-36,
+L-49). KRT's `pcb-free-agent` skill in `route` mode, which never moves a part,
+may run step 4 below, after steps 1 to 3 are done and locked. Its toolbox and
+traps apply throughout. Its stop rules don't: use the budget in "Success,
 and when to stop" above.
 From inside the checkout that is
 `/pcb-free-agent route <abs board> <abs floorplan.json>`; from anywhere else,
 follow its SKILL.md.
 
 **Either way, the order is L-36's, and each step is checked before the next.**
-If you use `pcb-free-agent`, give it this order, the layer order and the layer
-costs, and check its manifest follows them. If you run the chain yourself:
+If you use `pcb-free-agent`, hand it a board with steps 1 to 3 done and
+locked, give it the layer order and the layer costs, and check its manifest
+didn't touch the locked copper or the plane layers. If you run the chain yourself:
 
-1. **Planes and power first**, with the edge ground ring (L-38): draw the ring in
-   the edge band on the outer layers, with its stitching vias, alongside the
-   plane. `route_planes.py --nets GND --plane-layers In1.Cu`,
-   plus any power plane the layer plan allows (`--nets GND 3V3 --plane-layers
-   In1.Cu In2.Cu`). Then route the plane and power nets themselves with
-   `route.py --nets GND <power nets>` over every layer. `route_planes.py` places
-   no taps, and this is the pass that welds each pad into its pour: one via per
-   power and ground pad (L-39). Check it with `check_copper.py`
-   (`power-pin-via`, `gnd-pin-via`) before going on. Power
-   without a plane goes here too, as pours or tracks at its class width (L-21).
-   Refill, and check that the plane is whole and GND has no opens before going
-   on (L-23, L-35).
+1. **Planes, rails and pin vias, drawn, not routed** (L-36 step 2), with the
+   edge ground ring (L-38): draw the ring in the edge band on the outer layers
+   alongside the plane. Draw the GND plane and the rail shapes as zones in
+   code or in pcbnew, and fill them. Then the pin-via pass: lay each power and
+   ground pad's own via, or as many as its `pad-currents:` entry needs (L-39),
+   with a script that places each via adjacent to its pad on a stub and
+   checks clearance before it commits, or by hand. A pad outside its rail's
+   shape gets a track at the rail's class width on a signal layer to its own
+   via. Don't run `route.py --nets GND <power nets>` to do this: a router
+   pass over the plane nets is what welds them with track on the plane
+   layers. Check with `check_copper.py` (`power-pin-via`, `gnd-pin-via`,
+   `plane-track`), refill, and confirm the plane is whole and the plane nets
+   have no opens before going on (L-23, L-35).
 2. **Fanout, all of it, before any track** (L-47, L-39, L-43). On a board
    with a BGA, a WLCSP or a repeated cell array, run `hdi-breakout` first: it
    plans and places this group and writes the `breakout:` block of the spec,
    and this step only checks that the group is there and locked. Otherwise decide per ball
    ring: outer ring on the surface with a dogbone to a via wholly outside the
    ball field, inner rings via-in-pad at the ball centre (declared on the
-   spec's `allow-via-in-pad:` line). Place every fanout via, the pin via of
-   every power and ground pad, the vias at every power entry (two or more per
-   rail, L-21) and, on an HDI stack, the shared GND taps, as one locked group.
+   spec's `allow-via-in-pad:` line). Place every fanout via, the vias at every power
+   entry (two or more per
+   rail, L-21) and, on an HDI stack, the shared GND taps, as one locked group with
+   the pin vias from step 1.
    `bga_fanout.py` / `qfn_fanout.py --component <ref>` for each BGA, WLCSP, QFN
    and dense connector, with the layer order from step 1, so the escape vias
    land on real plane fill. Check the group with `check_copper.py`
@@ -337,11 +367,19 @@ costs, and check its manifest follows them. If you run the chain yourself:
    project router, which honours the same rules
    (via at a pad centre or outside it, pads as leaves, ends at via centres)
    and is graded by the same checks afterwards.
-3. **Critical nets.** `route_diff.py` for pairs, then `route.py --nets` for
-   length groups, clocks, switch nodes and sensitive analog, with the layer
-   costs.
-4. **Everything else.** `route.py --nets '*'` with the layer costs, and no
-   `--track-width`, so the net classes set the widths.
+3. **Critical nets, deliberately** (L-49). Every entry of the spec's
+   `critical-nets:` list, before any autorouting: by hand in pcbnew (the
+   interactive router `X`, the diff-pair router `6`), or as an exact path a
+   script lays along the corridor the spec names. `route_diff.py` or
+   `route.py --nets` on one entry at a time is allowed only as a draft that
+   you then inspect and accept or redo; never a batch of critical nets in one
+   pass. Render each one, check it against its L-49 line (pairing, loop,
+   where a Kelvin pair leaves the shunt, what it runs past), then lock it.
+   Record each entry's result in `review/routing/critical.md`. Show the
+   human the critical copper before step 4.
+4. **Everything else.** `route.py --nets '*'` with the layer costs (plane
+   layers `-1`), `--keep-input-copper`, and no `--track-width`, so the net
+   classes set the widths. This is the only unattended autorouting step.
 5. **Congestion.** If step 4 leaves nets open and the diagnosis is congestion,
    re-run `layer_capacity.py --pre-route` on the result. If the worst cut is
    over its target on the signal layers, the outcome is **Needs more layers**.
@@ -522,7 +560,8 @@ change before grading. Never re-route through a stitching grid, and never
 patch individual stitching vias by hand. Regenerate the whole group.
 
 **In code** where KRT has the lever: rip up and re-route a net set, repair a
-broken plane (`repair_planes.py`), clean up copper, or reconnect with the
+broken plane by fixing its zone outline or moving what cut it (not with
+`repair_planes.py` or any other router track on the plane layer, L-36), clean up copper, or reconnect with the
 KiCad oracle. KRT's playbook lists these. `route.py`'s own cleanup pass removes
 what `check_weird` calls removable.
 
@@ -530,8 +569,8 @@ what `check_weird` calls removable.
 
 1. **Plane-net track (L-35).** Delete the track `check_copper` lists as
    `plane-track`, refill, and re-check connectivity. If the net opens, the
-   plane is broken: repair it (`repair_planes.py`) rather than putting the
-   track back.
+   plane is broken: fix the zone outline or move the copper that cut it,
+   rather than putting the track back or letting a router weld it.
 2. **Duplicates, overlaps, fold-backs, loops, zero-length pieces (L-34).** In
    pcbnew, Tools → Cleanup Tracks & Vias clears most of them. Re-run both
    checkers after it, and take out by hand what's left.

@@ -188,7 +188,9 @@ spacing. The human moved both about 0.5 mm inboard to pull the lanes out of
 the band.
 
 Leave room for a via beside every power and ground pad (L-39): each one gets
-its own via to its plane, within 1.5 mm of track. It matters most at the
+its own via to its plane, as close as clearance allows (0.5 mm ring to pad
+edge, 1.5 mm of track at most), and a high-current pad gets room for
+`ceil(I / pin_vias.via_amps)` of them (three 0.6/0.3 vias at 1.5 A). It matters most at the
 decoupling caps. Two caps butted pad to pad, or a cap tucked under a
 fine-pitch part, can leave no room for the via.
 
