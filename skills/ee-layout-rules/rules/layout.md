@@ -537,7 +537,8 @@ parts. Work in order of current: pulsed and high-current rails (LED drive,
 motor, radio PA, a regulator's input and output caps) get their vias first and
 never go on the exception list. *(2026-10-23)* A switching regulator's cell is
 the exception to the pass: its hot-loop pads connect on the component layer and its
-vias are part of its layout (L-11), so the pass skips its pads. An EN or MODE pin
+vias are part of its layout (L-11), so the pass skips its pads: the routing spec
+lists the cell's parts on a `regulator-cells:` line, and `check_copper.py` skips them. An EN or MODE pin
 tied to VIN carries no current and needs no via count (L-63). The `power-pin-via` report names the rail for
 each pad, so the highest-current misses get fixed first.
 

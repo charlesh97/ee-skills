@@ -88,7 +88,10 @@ without a zone. This script covers the rest:
                         its own via
   gnd-pin-via     L-39  the same for ground pads (--ground-nets). A warning: "where the
                         pitch allows"; a failure at --stage final
-  shared-pin-via  L-39  one via serving as the only via of two or more power or ground pads
+  shared-pin-via  L-39  one via serving as the only via of two or more power or ground pads.
+                        The three pin-via checks skip every pad of a part named on the routing
+                        spec's "regulator-cells:" line (or --regulator-cells): a regulator cell
+                        carries its own vias, and dcdc-layout's check_regulator.py grades it
   pour-island     L-43  a fill island of a ground net (--ring-net and --ground-nets) of at
                         least stitch.min_island_mm2 with fewer than stitch.min_island_vias
                         vias of that net inside it (one via below stitch.two_via_mm2).
@@ -763,6 +766,19 @@ def spec_direction_exceptions(path):
     return out
 
 
+def spec_ref_list(path, key):
+    """REF names from a "<key>:" line of the routing spec, e.g. "regulator-cells: U2 L1 C4 C115 C116"."""
+    out = set()
+    if not path or not os.path.exists(path):
+        return out
+    pat = re.compile(re.sub(r"-", r"[-_ ]", key) + r"\W*?[:=]\s*(.*)", re.I)
+    for line in open(path):
+        m = pat.search(line)
+        if m:
+            out |= {tok.strip(".") for tok in re.split(r"[\s,;\[\]`*]+", m.group(1)) if re.fullmatch(r"[A-Za-z][\w-]*", tok.strip("."))}
+    return out
+
+
 def spec_allow_list(path):
     """REF.PAD names from "allow-via-in-pad:" lines of the routing spec (markdown or yaml)."""
     out = set()
@@ -842,8 +858,10 @@ def pad_rail_kind(p, power_nets, grounds, class_prefixes):
     return "power" if any(p.GetNetClassName().startswith(c) for c in class_prefixes) else None
 
 
-def pin_via_checks(board, max_track_mm, power_nets, ground_nets, class_prefixes):
-    """For each pad on a power or ground net, find the nearest same-net via it reaches through its own track."""
+def pin_via_checks(board, max_track_mm, power_nets, ground_nets, class_prefixes, cell_refs=()):
+    """For each pad on a power or ground net, find the nearest same-net via it reaches through its own track.
+    Pads of regulator-cell parts (cell_refs) are skipped: a cell carries its own vias, its hot-loop pads connect
+    on the component layer, and dcdc-layout's check_regulator.py grades them (L-39, L-11)."""
     F = collections.defaultdict(list)
     maxlen = pcbnew.FromMM(max_track_mm)
     vias = collections.defaultdict(list)
@@ -867,8 +885,12 @@ def pin_via_checks(board, max_track_mm, power_nets, ground_nets, class_prefixes)
         return None
 
     owner = collections.defaultdict(list)         # via -> pads that found it
-    count = {"power": 0, "ground": 0}
+    count = {"power": 0, "ground": 0, "cell": 0}
+    cell_refs = set(cell_refs)
     for fp in board.GetFootprints():
+        if fp.GetReference() in cell_refs:
+            count["cell"] += sum(1 for p in fp.Pads() if pad_rail_kind(p, power_nets, grounds, class_prefixes))
+            continue
         for p in fp.Pads():
             if p.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH or not p.IsOnCopperLayer():
                 continue
@@ -1254,6 +1276,8 @@ def main():
     nc = rules_block("netclasses", {"Default": {"via_drill": 0.3}}, prof)
     ap.add_argument("--allow-via-in-pad", help="L-30: comma list of REF.PAD declared via-in-pad (filled and capped); "
                     "added to the routing spec's allow-via-in-pad line")
+    ap.add_argument("--regulator-cells", help="L-39: comma list of refs in regulator cells, skipped by the pin-via checks "
+                    "(added to the routing spec's regulator-cells line); grade them with dcdc-layout's check_regulator.py")
     ap.add_argument("--routing-spec", help="routing spec to read allow-via-in-pad and direction-exceptions from "
                     "(default review/routing/spec.md beside the board)")
     ap.add_argument("--std-via-drill", type=float, default=nc["Default"]["via_drill"],
@@ -1291,7 +1315,8 @@ def main():
     F.update(EV)
     pinfo = None
     if args.pin_via_track > 0:
-        PF, pinfo = pin_via_checks(board, args.pin_via_track, power_nets, ground_nets, pv["power_class_prefixes"])
+        cells = spec_ref_list(spec, "regulator-cells") | {n.strip() for n in (args.regulator_cells or "").split(",") if n.strip()}
+        PF, pinfo = pin_via_checks(board, args.pin_via_track, power_nets, ground_nets, pv["power_class_prefixes"], cells)
         F.update(PF)
     oinfo = None
     if not args.no_pours:
@@ -1366,7 +1391,8 @@ def main():
         print("\npin vias (L-39): skipped (--pin-via-track 0); the routing spec must say why")
     else:
         print(f"\npin vias (L-39): {pinfo['power']} power and {pinfo['ground']} ground SMD pads checked; "
-              f"{len(F.get('power-pin-via', []))} power and {len(F.get('gnd-pin-via', []))} ground pads without their own via")
+              f"{len(F.get('power-pin-via', []))} power and {len(F.get('gnd-pin-via', []))} ground pads without their own via"
+              + (f"; {pinfo['cell']} rail pads in regulator cells skipped (graded by check_regulator.py)" if pinfo.get("cell") else ""))
 
     if oinfo is None:
         print("\npours (L-43): skipped (--no-pours)")

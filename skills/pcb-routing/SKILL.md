@@ -352,7 +352,15 @@ footprints when it closes (L-49). If you run the chain yourself:
    with a script that places each via adjacent to its pad on a stub and
    checks clearance before it commits, or by hand. A pad outside its rail's
    shape gets a track at the rail's class width on a signal layer to its own
-   via. Don't run `route.py --nets GND <power nets>` to do this: a router
+   via. **Regulator cells are excluded.** List every part of every switching
+   regulator cell (IC, input and output caps, inductor, straps, links) on the
+   routing spec's `regulator-cells:` line. The pin-via script skips those pads,
+   and `check_copper.py` leaves them out of `power-pin-via`, `gnd-pin-via` and
+   `shared-pin-via` (`--regulator-cells` adds refs on the command line). A
+   cell's hot loop connects on the component layer, and its vias are part of
+   the cell (`dcdc-layout`). A second via per pad there closes the loop
+   through the plane again, and the cell check, not the pin-via report, grades
+   them. Don't run `route.py --nets GND <power nets>` to do this: a router
    pass over the plane nets is what welds them with track on the plane
    layers. Check with `check_copper.py` (`power-pin-via`, `gnd-pin-via`,
    `plane-track`), refill, and confirm the plane is whole and the plane nets

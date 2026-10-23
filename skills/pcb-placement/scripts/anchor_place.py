@@ -28,7 +28,8 @@ Run with KiCadRoutingTools' venv python ($KV: pcbnew, numpy, shapely). Board opt
 place also takes --keep-good MM (leave parts already that close to their pin), --held JSON (no-part zones:
 {"areas": [{"rect": [x0,y0,x1,y1], "layers": ["F.Cu"] or null, "active": true}]}) and --overrides FILE
 (reviewer lines: "FIX REF" keeps a part; "ANCHOR REF NET REF2.PAD" pulls REF's pin on NET to that pad, or for
-a decap names the IC pin it serves).
+a decap names the IC pin it serves; "POSE REF X Y ROT SIDE" seats REF there first and keeps it), and --keep-nets
+FILE (one net name per line, spaces allowed: parts with a pad on that net's routed copper stay).
 
   $KV anchor_place.py select  BOARD --sheets /sheetA/ /sheetB/ --region X0 Y0 X1 Y1 > movable.txt
   $KV anchor_place.py classify BOARD --movable movable.txt [--csv roles.csv]
@@ -93,6 +94,7 @@ def cap_value(f):
 
 
 def read_refs(path): return [l.split()[0] for l in open(path) if l.strip() and not l.startswith("#")]
+def read_nets(path): return {l.strip() for l in open(path) if l.strip() and not l.startswith("#")} if path else set()   # names have spaces
 
 
 # ---------------------------------------------------------------- board model
@@ -743,7 +745,7 @@ def cmd_rip(a):
     """rip the movable parts' routed nets inside the region (tracks with an end in it, vias in it), and their
     plane-pin taps; record where the remaining copper of each net leaves off (stubs) for the placer and router."""
     B = Board(a.board, read_refs(a.movable), a.region); b = B.b; R = box(*a.region)
-    nets = set(area_nets(B)) - set(read_refs(a.keep_nets) if a.keep_nets else [])
+    nets = set(area_nets(B)) - read_nets(a.keep_nets)
     inside = lambda q: R.contains(Point(mm(q.x), mm(q.y)))
     mpads = [p for r in B.movable for p in B.fp[r].Pads()]
     gone = []; ends = collections.defaultdict(list)
@@ -796,6 +798,7 @@ def read_overrides(path, C):
         w = line.split("#")[0].split()
         if not w or w[1] not in C: continue
         if w[0] == "FIX": C[w[1]]["role"] = "free"; C[w[1]]["fixed_by"] = "override"
+        elif w[0] == "POSE": C[w[1]]["role"] = "free"; C[w[1]]["fixed_by"] = "pose"
         elif w[0] == "ANCHOR":
             ref2, pad = w[3].split(".", 1); c = C[w[1]]
             if c["owner"] or c["role"] in ("decap", "rail-esd", "rail-link", "rail-filter"):
@@ -804,9 +807,24 @@ def read_overrides(path, C):
                 c.setdefault("force", {})[w[2]] = (ref2, pad)
 
 
+def apply_poses(b, path, refs):
+    """'POSE REF X Y ROT SIDE' lines (a pin review's chosen pose): set them on the board before anything is
+    measured, so the part is seated there, kept, and gets its pin vias at the new pose"""
+    if not path: return
+    for line in open(path):
+        w = line.split("#")[0].split()
+        if len(w) >= 6 and w[0] == "POSE" and w[1] in refs:
+            f = b.FindFootprintByReference(w[1]); was = f.IsLocked(); f.SetLocked(False)
+            if (w[5] == "B") != f.IsFlipped(): f.Flip(f.GetPosition(), pcbnew.FLIP_DIRECTION_LEFT_RIGHT)
+            f.SetPosition(pcbnew.VECTOR2I(int(round(float(w[2]) * MM)), int(round(float(w[3]) * MM)))); f.SetOrientationDegrees(float(w[4]))
+            f.SetLocked(was)
+
+
 def cmd_place(a):
     stubs = json.load(open(a.stubs)) if a.stubs else {}
-    B = Board(a.board, read_refs(a.movable), a.region, stubs); C = classify(B); read_overrides(a.overrides, C)
+    B = Board(a.board, read_refs(a.movable), a.region, stubs)
+    apply_poses(B.b, a.overrides, set(B.movable))
+    C = classify(B); read_overrides(a.overrides, C)
     M = Model(B, C); seq = order(C)
     before = {r: (pxy(B.fp[r]), B.fp[r].GetOrientationDegrees() % 360) for r in B.movable}
     side = {side_of(B.fp[r]) for r in B.movable}
@@ -820,6 +838,13 @@ def cmd_place(a):
     print(f"before: ratsnest {rn0:.1f} mm over {len(nets)} nets, model cost {sum(cost0.values()):.1f}")
     # round 1: lift every part that is not already at its pin (--keep-good), seat in priority order
     keep = {r for r in B.movable if C[r]["role"] == "free"}     # no pin to belong to (a 0R between two rails): stays
+    if a.keep_nets:          # a part whose pad carries kept critical copper stays (moving it breaks the critical route)
+        kn = read_nets(a.keep_nets)
+        trk_nets = {t.GetNetname() for t in B.b.GetTracks()}
+        for r in B.movable:
+            if C[r].get("fixed_by") == "pose": continue
+            if any(p.GetNetname() in kn and p.GetNetname() in trk_nets and p.GetNetname() not in POWER for p in B.fp[r].Pads()):
+                keep.add(r); C[r]["role"] = "free"; C[r]["fixed_by"] = "critical copper"
     if a.keep_good > 0:
         for r in B.movable:
             d = anchor_dist(B, C, r)
@@ -835,6 +860,15 @@ def cmd_place(a):
         if r in keep: continue
         L = Ls[side_of(B.fp[r])]
         res = seat(M, L, r, radius=a.radius) or seat(M, L, r, radius=2 * a.radius)
+        # never trade a part's current spot for a worse one: if where it sits now is still legal and no dearer
+        # than the best free spot (its own pin's area may be full), it stays
+        x, y = before[r][0]; rot = int(round(before[r][1])) % 360
+        cg0, pads0 = M.geom(r, x, y, rot)
+        if L.check(r, cg0, pads0) is None:
+            c0 = M.cost_at(r, x, y, rot)
+            if res is None or res[3] >= c0 - 0.05:
+                M.pos[r] = (x, y, rot); L.put(r, cg0, pads0); log[r] = "kept (no better legal spot)"
+                print(f"  {r:6s} stays: no legal spot better than where it is (cost {c0:.2f})"); continue
         if res is None:
             x, y = before[r][0]; rot = int(round(before[r][1])) % 360; M.pos[r] = (x, y, rot)
             cg, pads = M.geom(r, x, y, rot); L.put(r, cg, pads); log[r] = "kept (no legal pose)"
@@ -1022,7 +1056,8 @@ def main():
     s = common(sp.add_parser("rip"), out=True); s.add_argument("--keep-nets", help="file of nets whose copper stays (critical paths)")
     s = common(sp.add_parser("place"), out=True); s.add_argument("--rounds", type=int, default=4); s.add_argument("--radius", type=float, default=8.0)
     s.add_argument("--plan"); s.add_argument("--edits"); s.add_argument("--only-round1", action="store_true")
-    s.add_argument("--overrides", help="reviewer overrides file: FIX REF / ANCHOR REF NET REF2.PAD")
+    s.add_argument("--overrides", help="reviewer overrides file: FIX REF / ANCHOR REF NET REF2.PAD / POSE REF X Y ROT SIDE")
+    s.add_argument("--keep-nets", help="critical nets whose copper stays: parts with a pad on them stay too")
     s.add_argument("--keep-good", type=float, default=0.0, help="leave parts already within this many mm of their pin")
     s.add_argument("--held", help="held.json of routing reservations: active areas are no-part zones on their layers")
     s = common(sp.add_parser("measure")); s.add_argument("--json"); s.add_argument("--nets")
