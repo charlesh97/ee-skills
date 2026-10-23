@@ -217,6 +217,31 @@ it meant rather than what is there.
 
 ## 5. Clean up
 
+### 5a. Small parts to their pins (L-61)
+
+A zone placer leaves small parts wherever they fit. Check the decaps, pull-ups, bias and series parts
+around each IC: each should sit at the pin it belongs to. Where they don't, run the anchor-pin placer on
+that area. It works on a copy, and keeps ICs, connectors, test points and locked parts fixed:
+
+```bash
+KV=<KiCadRoutingTools>/.kvenv/bin/python; S=<ee-skills>/skills/pcb-placement/scripts; REG="x0 y0 x1 y1"
+$KV $S/anchor_place.py select   board.kicad_pcb --sheets /sheetA/ /sheetB/ --region $REG > movable.txt
+$KV $S/anchor_place.py classify board.kicad_pcb --movable movable.txt --region $REG   # read it: owners right?
+$KV $S/anchor_place.py rip      board.kicad_pcb base.kicad_pcb --movable movable.txt --region $REG
+$KV $S/anchor_place.py place    base.kicad_pcb placed.kicad_pcb --movable movable.txt --region $REG \
+      --plan plan.csv --edits moves.txt [--floorplan intent.json] [--hv REGEX] [--power-nets GLOB ...]
+$KV $S/anchor_place.py measure  placed.kicad_pcb --movable movable.txt --region $REG
+$KV $S/anchor_render.py placed.kicad_pcb after.png --movable movable.txt --region $REG --airwires --no-copper --plan plan.csv
+```
+
+- `rip` removes the routed copper of the movable parts' nets inside the box, and their pin taps. It writes
+  that removal as DELETE lines, and `place` writes the moves and pin vias in the same edit format.
+- Read the `classify` table before placing. A wrong owner (a decap given to a connector, a pull-up whose
+  pin sits outside the box) is cheaper to fix there than on the board.
+- Judge the result on the nets local to the box: ratsnest, routed vias and opens after a re-route,
+  courtyard overlaps, and rail pads with their own via. Report those with before/after renders.
+
+
 **In code** when the fix is a known move: `py_placer/place_pose.py` (set a pose,
 rotate, lock), or a scoped `place_seed --repair` / `--reseat` on just the refs
 at fault. KRT notes that freeing two parts cleared both blocking pairs in 63 s,

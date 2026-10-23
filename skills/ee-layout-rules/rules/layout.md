@@ -835,6 +835,33 @@ the end of the row or never closes. On the motor-driver board, one phase's isola
 the MCU's PWM pins and that phase's gate inputs with no gap planned, and those PWM nets had to be routed
 round it after the fact.
 
+**L-61 Seat each small part at the pin it belongs to, with its via, before anything is packed.**
+*(draft, 2026-10-23, from a motor-driver board's aux-port corner.)* A zone or global placer packs small
+parts as filler. It scores signal airwires only, so a decap, a 0R link or an ESD diode between two rails
+has no pull at all, and a pull-up's single net loses to packing. Two subcircuits in one zone end up
+interleaved. Before any packing, decide for each small part (R, C, L, FB, diode, small protection IC)
+which pin it belongs to:
+- a pull-up, bias or current-limit resistor: the one pad its signal net reaches;
+- a decap, 0R link or rail ESD diode: the pins of its owner. On a rail the netlist can't name the IC,
+  because every decap on a rail touches the same nets. The schematic sheet can: the owner is the IC (a
+  connector, for an ESD diode) in the same sheet with pins on all the part's nets;
+- a series part: the tree of its private net;
+- a part on a net that only joins small parts (series R-R-R in front of a pin, a pull-up and its
+  diode): beside its partner. Walk such a chain the way a person does: seat the member whose other net
+  reaches the IC pin first, then each next part beside the one before.
+
+Lift them all, then seat them in that order, decaps smallest first. Each goes at the cheapest legal pose
+near its pin, turned so its other pin faces where that net goes; a ground or plane pin faces away from
+the IC body. Reserve that pin's own via (L-39) as part of the pose. A placement that ignores via room
+shortens the airwires and takes away the rail pins' vias. Then re-seat each part against the final
+positions of the others, and swap identical footprints while the estimated wirelength drops. Keep ICs
+and connectors fixed. Write out the move list and a per-part table (role, owner pin, old and new pose,
+cost) so a person can check it. Measure on the nets local to the area: long airwires to a distant MCU hide
+the change. `pcb-placement/scripts/anchor_place.py` does all of this. On the motor-driver board's aux
+corner (49 parts), it cut the local ratsnest from 308 to 108 mm, the routed signal vias from 40 to 26 and
+the opens from 6 to 3, and cleared the ten parts sitting under through-hole headers. A first run without
+via reservation had left 22 of 51 rail pads with no via room; the old placement left 12.
+
 ---
 
 ## Flex
