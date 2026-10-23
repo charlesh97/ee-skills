@@ -115,7 +115,7 @@ bulk of the work.
    the toolbox, the DONE conditions and the routing traps, and they change
    faster than this skill could track.
 2. Load `ee-layout-rules`, then read `ee-layout-rules/rules/layout.md`: L-01…L-05
-   (setup) and L-20…L-39 and L-43…L-49 (routing), plus L-40…L-42 on flex, are the rules this
+   (setup) and L-20…L-39 and L-43…L-60 (routing), plus L-40…L-42 on flex, are the rules this
    skill routes to.
 3. **The rules are on the board before routing starts.** Run
    `$KPY <ee-skills>/skills/ee-layout-rules/scripts/board_rules.py check <board> --profile rigid|flex`.

@@ -43,6 +43,9 @@ is silently held to Board Setup alone.
   clamped to it. This has been observed, and also contradicted, on 10.0.6, so
   probe it (layout-review LAY-03a) rather than assume. Either way, put the fab floor (trace/space, drill, annular ring, edge clearance) in Board
   Setup; put design intent in the DRU.
+- A unitless number (`(min 0.3)`) is a parse error in KiCad 10, and kicad-cli then runs DRC with **no**
+  custom rules and no warning; pcbnew's `WriteDRCReport` prints the error. Prove each rule by tightening
+  it on a copy and seeing its name in the report (L-59).
 
 ## Conditions
 

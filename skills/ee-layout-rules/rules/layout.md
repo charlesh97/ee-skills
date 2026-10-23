@@ -638,6 +638,129 @@ Each entry names the net or nets, the rule it is routed to, its layers, and
 what was checked; an entry left to the autorouter says why. layout-review
 grades it (LAY-57 to LAY-60).
 
+**L-50 Size a routing reservation to the route, bind it to its layer, and release it when the route
+locks.** *(draft, 2026-10-23, from a motor-driver board routed by parallel threads.)* A corridor or hold
+that keeps other work out of a critical route's path is drawn as wide as the route needs, and no wider:
+its track widths, its pair gap, the clearances on both sides, and the via sites it will use. It names
+its layer. A merge or DRC gate checks tracks in a corridor only on that layer, and checks vias on every
+layer, since a via passes through them all. A reservation is lifted, or cut back to the copper laid, as
+soon as its route is laid and locked. Area holds are dated, name their owner, and shrink to what is still
+in progress. On the motor-driver board:
+- Current-amplifier output lanes 1.1 mm wide were checked on every layer, which walled off three test
+  points that outer-layer tracks could have reached.
+- Reservation boxes blocked 36 pin vias, more than the parts did.
+- An undated all-layer hold over a whole strip refused a finished, unrelated batch until it was cut back.
+
+**L-51 Reserve each critical pin's escape before any other copper lands near it.** *(draft,
+2026-10-23.)* Before block or housekeeping routing starts near a critical part (a gate driver, a FET
+gate, a shunt, a converter or clock pin), list each critical pin's escape. That is the via sites clear
+on every layer within a few mm, found with a via-site map, and the one lane to them. Reserve those sites
+and lanes to the critical net, even when that net is routed later. A critical pin with a single clear
+via site is a placement finding at that point, not a routing problem for later. On the motor-driver
+board a brake-chopper FET's gate pin was ringed by its own source vias and its drain pad, with one
+through-via site left. A divider net routed earlier took the only outer-layer path past the gate
+resistor, and the gate drive had to be re-laid three times. Housekeeping nets routed round the MCU
+before the critical escapes were fixed had to be ripped out of the lanes and re-laid. Critical nets land
+before housekeeping, not only in the routing order but in the merge order. When MCU sense and
+housekeeping nets merged first, six comparator resistor and capacitor pads were left boxed in on the
+outer layer with no via site. They needed vias in pad, and the over-current trip into the MCU's break
+input could only leave its pin through a via under the MCU body.
+
+**L-52 Run one router search at a time on a machine.** *(draft, 2026-10-23.)* Autorouter and other
+search-heavy passes (whole-board via-site and placement searches) run one after another on a machine,
+not once per thread. When parallel threads share a host, a queue or lock decides which search runs,
+and the critical-net work goes first. Each search is limited by its net list to the nets that reach the
+block. On the motor-driver board, four router runs at once on one host starved the critical-net
+thread, and an unscoped run of another thread's route table on a block copy took over an hour.
+
+**L-53 Work on a copy of the current head, and re-run the merge gate before every submission.**
+*(draft, 2026-10-23.)* A block routed in parallel is re-based onto the head it will merge into: its
+finished nets are transplanted onto a fresh copy of that head, not re-routed. Then the gate runs again,
+because the gate's own inputs change between heads, not only the board: held areas, corridors, the DRC
+rules, the reserved-net list. The submission states the head it was checked on. Near the busiest part
+(the MCU periphery, a BGA or QFN escape field), expect a copy to go stale within the hour, and submit
+small batches. On the motor-driver board one block was refused three times in two hours: once for a
+dangling stub, once for a crossing with a newly merged sense net, and once by a new all-layer hold.
+Each time it had been clean on the head it was built on. Two blocks round the MCU needed explicit
+re-lane lists and add-only merges sequenced after each other.
+
+**L-54 Plan a breakout for every fine-pitch power and ground pin at placement.** *(draft, 2026-10-23;
+extends L-39.)* Every power or ground pin on a part with a pitch of 0.8 mm or less gets either its own
+via site within 1.5 mm, or a breakout. A breakout is a short straight stub (0.25 mm, at 0, 45 or 90
+degrees, on the pad's layer) out to the first legal via spot 0.6-3 mm away. It steps the via down
+(0.6/0.3, then 0.45/0.2, then 0.35/0.15) as far as the pin's current allows, and never lands a via in a
+pad (L-30). Two same-net pins may share one via. The placement review checks that each such pin has a
+site, because after routing most don't. On the motor-driver board, 2 of 28 fine-pitch plane pins on one
+side had a breakout spot after routing, and 2 of 4 on the other. The rest were caged by other nets'
+inner tracks and vias, or by L-39 pin vias round SOT-23 and VSSOP parts.
+
+**L-55 A moved via or a part pose must not land on another net's copper.** *(draft, 2026-10-23.)*
+Every via nudge and every pose for a moved part is checked against the board it will land on: the
+current head with the other moves applied. A pad or via that lands on another net's via or track
+re-nets it silently. The editor gives the via the pad's net, and DRC then reports only a dangling via or
+a missing connection, not a short. Find poses with a clearance-checked placement search on a fresh base,
+and only then freeze them as exact poses. After each nudge pass, compare every moved via's net with the
+plane or pour under it, and run DRC on a refilled copy. On the motor-driver board a part pose turned a
+GND via into a dangling signal via. A stray re-netted via had to be removed in a later rip pass, and 4 of
+7 proposed via nudges round a QFN added DRC errors and were refused. A merge gate therefore counts `via_dangling` as
+an error and treats one new dangling via as a possible short, never as noise. A transplanted signal
+track that passed over a moved resistor's ground via showed up only as +1 dangling via.
+
+**L-56 Don't use Freerouting on a planed, held multilayer board; use KRT and scripted exact paths.**
+*(draft, 2026-10-23.)* On a board with plane layers, rule areas and reserved corridors, Freerouting
+(the DSN/SES round trip) does not keep out of the planes and rule areas, and its run time grows past
+any useful bound. Route what is left with KiCadRoutingTools, plane layers costed out (L-36). Route what
+KRT can't close as exact scripted paths or by hand, and check them with KiCad DRC. Freerouting is an
+experiment on a copy, never a pass in the flow. On a 6-layer motor-driver board (Freerouting 2.5.0,
+headless):
+- One trial took 210 s for 2 nets and returned 2230 DRC violations, with the planes and rule areas
+  not kept out.
+- A second trial, on five boxed nets with a 900 s bound, spent 691 s in its first pass and ended it
+  with 53 unrouted and 3987 violations. It wrote no session file.
+
+**L-57 A join to existing copper is anchored to a named pad's copper and checked by the CAD tool's own
+connectivity.** *(draft, 2026-10-23.)* A scripted route that ends on "any copper of the net" (the nearest track
+or via of that net) can land on a fragment that reaches no pad: a stub, an island, or a leftover from a rip-up.
+The route then reports success while the net stays open, or a new island forms. A join names its anchor:
+the pad, or a point on copper that is connected to that pad when the join is laid. After every pass, the
+nets it touched are graded by the CAD tool's own connectivity, either its unconnected count or DRC on a copy
+with the other nets cleared, not by the router's report or a home-made geometric check. On the motor-driver
+board, a route table's "join to the net" step landed on unconnected copper, formed islands and reported OK. It
+was fixed by anchored joins. Separately, a geometric connectivity check disagreed with the router both ways, so
+only the tool's own count was trusted.
+
+**L-58 Near the busiest part, freeze a box for each merge round.** *(draft, 2026-10-23.)* Where several
+threads route around one part (the MCU periphery, a fine-pitch converter, a gating strip), a copy taken
+from the head goes stale in about 15 minutes. Its routes then collide with copper merged in the meantime,
+and the run that made them is wasted. Each round, the integrator freezes a box (an area, its layers and an
+end time), names the one thread that routes in it, and merges that thread's list before anyone else
+lands inside the box. Others work outside it or wait for the next round. A thread that can't finish
+inside its round hands the box back and re-checks on the next head. On the motor-driver board, a
+comparator block routed over 40 minutes on a 25-minute-old copy was refused on transplant. Four merges
+had landed in its area: shorts with a newly locked sense net, a moved resistor's ground via under one of
+its tracks, and two crossings. It had to be routed again from scratch.
+
+**L-59 Prove every custom DRC rule loads and fires.** *(draft, 2026-10-23.)* KiCad 10 rejects a rules
+file with a unitless number (`(min 0.3)` instead of `(min 0.3mm)`), and kicad-cli then runs DRC with no
+custom rules at all and says nothing. Only pcbnew's own report (`WriteDRCReport`) prints the parse error.
+After writing or editing `.kicad_dru`, tighten each rule on a copy until it must fail, and see the rule's
+name in the report ("rule 'kelvin_hv'"). Then loosen it and see the expected hits clear. Any script that
+carries its own copy of a clearance (a router's extra clearance per class, a merge gate) takes it from
+the rules file or is checked against it. A rule declared in one route table and missing from the next
+lets that table route at the class default beside nets the rule protects. On the motor-driver board,
+the HV clearance for Kelvin sense nets and three fine-pitch pad rules were never enforced until the
+units were added. One route table then laid two Kelvin-clearance violations the router didn't know about.
+
+**L-60 An isolation barrier is a wall: plan every crossing at placement.** *(draft, 2026-10-23.)* A row
+of digital isolators with its creepage keep-out, between the MCU and the gate drivers, splits the board
+for every signal that runs from one side to the other. At placement, list the nets that must cross it:
+each through its own isolator channel, and each non-isolated net (a PWM to a non-isolated gate stage, a
+fault line, a shared enable) through a planned gap in the row, on a named layer. Keep the gaps clear of
+pin vias and test points. A barrier with no planned gaps leaves those nets to a router, which goes round
+the end of the row or never closes. On the motor-driver board, one phase's isolator row stood between
+the MCU's PWM pins and that phase's gate inputs with no gap planned, and those PWM nets had to be routed
+round it after the fact.
+
 ---
 
 ## Flex
