@@ -333,6 +333,15 @@ def fit(a):
         for p in f.Pads():
             if r not in free_ok:          # a pad under the cell's pours, vias or tracks is in the way too
                 bb = p.GetBoundingBox(); pg = sbox(mm(bb.GetLeft()), mm(bb.GetTop()), mm(bb.GetRight()), mm(bb.GetBottom()))
+                # a pad's own clearance (a fiducial's 0.6 mm, say) beyond --clearance; no-net pads count like any other
+                own = 0.0
+                for src in (p, f):
+                    try:
+                        v = src.GetLocalClearance()
+                        own = max(own, mm(v) if v else 0.0)
+                    except Exception:
+                        pass
+                if own > a.clearance: pg = pg.buffer(own - a.clearance)
                 th = p.GetAttribute() in (pcbnew.PAD_ATTRIB_PTH, pcbnew.PAD_ATTRIB_NPTH)
                 for sd, lid in (("F", pcbnew.F_Cu), ("B", pcbnew.B_Cu)):
                     if th or p.IsOnLayer(lid): padobs[sd].append((r, p.GetNetname(), pg))
@@ -372,7 +381,7 @@ def fit(a):
 
     def pad_hits(sd, G, net):
         t, its = TP[sd]
-        return set() if t is None else {its[i][0] for i in t.query(G) if its[i][1] != net and its[i][2].intersects(G)}
+        return set() if t is None else {its[i][0] for i in t.query(G) if (its[i][1] != net or not its[i][1]) and its[i][2].intersects(G)}
 
     def hits(tree, g):
         t, its = tree
