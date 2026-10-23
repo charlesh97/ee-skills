@@ -789,7 +789,9 @@ which pin it belongs to:
   because every decap on a rail touches the same nets. The schematic sheet can: the owner is the IC (a
   connector, for an ESD diode) in the same sheet with pins on all the part's nets;
 - a series part: the tree of its private net;
-- a part on a net that only joins small parts (a pull-up and its diode): beside its partner.
+- a part on a net that only joins small parts (series R-R-R in front of a pin, a pull-up and its
+  diode): beside its partner. Walk such a chain the way a person does: seat the member whose other net
+  reaches the IC pin first, then each next part beside the one before.
 
 Lift them all, then seat them in that order, decaps smallest first. Each goes at the cheapest legal pose
 near its pin, turned so its other pin faces where that net goes; a ground or plane pin faces away from

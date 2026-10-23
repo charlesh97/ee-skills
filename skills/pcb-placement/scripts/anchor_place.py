@@ -211,12 +211,63 @@ def classify(B):
             role = "free"; prio = 4
         nfix = sum(len(B.fixed_pads(n, skip=(ref,))) for _, n in sig)
         out[ref] = dict(role=role, owner=own, anchors=anchors, pins=pins, prio=prio, nfix=nfix,
-                        cap=cap_value(f) if ref.startswith("C") else 0)
+                        cap=cap_value(f) if ref.startswith("C") else 0, chain=None)
+    find_chains(B, out)
     return out
 
 
+def private(B, n):
+    """a signal net that only joins movable parts (the link inside an R-R-R or R-D chain)"""
+    return len(B.netpads[n]) >= 2 and all(r in B.mov for r, _ in B.netpads[n])
+
+
+def find_chains(B, C):
+    """Chains of small parts joined by private nets (series R-R-R in front of a pin, pull-up + diode) are
+    seated the way a person does it: start at the member whose other net reaches a fixed pin (an IC pin in
+    the region first, then a connector pin, then anything farther), seat it at that pin, then walk the chain
+    outward, each next part beside the one before. Sets C[ref]["chain"] = (root, index) and the walk order."""
+    small = [r for r in C if len(B.fp[r].Pads()) <= 3]
+    adj = collections.defaultdict(set)
+    for r in small:
+        for _, n, k in C[r]["pins"]:
+            if k == "signal" and private(B, n):
+                for q, _ in B.netpads[n]:
+                    if q != r and q in C and len(B.fp[q].Pads()) <= 3: adj[r].add(q)
+    R = box(*B.region).buffer(3) if B.region else None
+    def score(r):
+        best = 0
+        for _, n, k in C[r]["pins"]:
+            if k != "signal" or private(B, n): continue
+            for q, p in B.fixed_pads(n, skip=(r,)):
+                g = B.fp[q]; near = R is None or R.contains(Point(pxy(p)))
+                kind = 2 if not is_conn(g) and not SMALL.match(q) and not q.startswith("TP") else 1
+                best = max(best, kind + (2 if near else 0))
+        return best
+    seen = set()
+    for r in sorted(adj):
+        if r in seen: continue
+        comp, stack = [], [r]
+        while stack:
+            x = stack.pop()
+            if x in seen: continue
+            seen.add(x); comp.append(x); stack += sorted(adj[x] - seen)
+        if len(comp) < 2: continue
+        root = max(sorted(comp), key=score)
+        walk, frontier, done = [], [root], {root}
+        while frontier:
+            x = frontier.pop(0); walk.append(x)
+            for y in sorted(adj[x]):
+                if y not in done: done.add(y); frontier.append(y)
+        gp = min(C[x]["prio"] for x in comp)
+        for i, x in enumerate(walk): C[x]["chain"] = (root, i, gp)
+
+
 def order(C):
-    return sorted(C, key=lambda r: (C[r]["prio"], C[r]["cap"], -C[r]["nfix"], r))
+    def key(r):
+        ch = C[r]["chain"]
+        if ch: return (ch[2], 0, -C[ch[0]]["nfix"], ch[0], ch[1])
+        return (C[r]["prio"], C[r]["cap"], -C[r]["nfix"], r, 0)
+    return sorted(C, key=key)
 
 
 # ---------------------------------------------------------------- geometry of a part per rotation
@@ -454,6 +505,11 @@ class Model:
         for num, n, k in c["pins"]:
             if k in ("signal", "power"):
                 pts = self.terminals(n, ref)
+                if not pts and k == "signal" and private(B, n):
+                    # the rest of the chain isn't seated yet: face this pin toward where the chain ends up
+                    far = self.chain_ends(ref, n)
+                    if far: out.append((num, [(q, q) for q in far], W_OUT, "chain-direction"))
+                    continue
                 if not pts: continue
                 segs = mst_segments(pts)
                 w = W_SIG if k == "signal" else W_POWER
@@ -470,6 +526,24 @@ class Model:
             q = (anchor_xy[0] + 1.6 * ux / L, anchor_xy[1] + 1.6 * uy / L)
             for num, n, k in c["pins"]:
                 if k == "plane": out.append((num, [(q, q)], W_OUT, "outward"))
+        return out
+
+    def chain_ends(self, ref, net):
+        """fixed pads (or seated parts' pads) reached by walking the chain from ref through net"""
+        B = self.B; seen = {ref}; nets = [net]; out = []; done = set()
+        while nets:
+            n = nets.pop()
+            if n in done: continue
+            done.add(n)
+            for r, p in B.netpads[n]:
+                if r in seen: continue
+                seen.add(r)
+                for q in B.fp[r].Pads():
+                    m = q.GetNetname()
+                    if m == n or is_nc(m) or m in done: continue
+                    if private(B, m): nets.append(m)
+                    elif B.role(m, pxy(q)) == "signal":
+                        out += [pxy(pp) for rr, pp in B.netpads[m] if rr not in B.mov]
         return out
 
     def cost_grid(self, ref, P, rot, T):
