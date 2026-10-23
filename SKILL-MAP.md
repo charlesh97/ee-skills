@@ -18,6 +18,9 @@ what was tightened and what is still open.
   schematic-capture ──► schematic-review        (fresh session)
           │
           ▼             ee-layout-rules  (loaded by the board stage)
+  dcdc-layout      (each switcher laid as a cell from its datasheet, checked, placed first)
+          │
+          ▼
   pcb-placement ──► layout-review @placement    (subagent)
           │
           ▼

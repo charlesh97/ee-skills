@@ -30,8 +30,8 @@ say which, and mark anything assumed.
 | LAY-10 | Copper-to-edge on every layer, against both the Board Setup floor and `edge_ring.margin_mm` (the band); a pad whose gap to the edge must carry lanes has room for the band plus those lanes | drc.json, L-38 | script | P+ |
 | LAY-11 | Courtyard overlap | L-17 | script | P+ |
 | LAY-12 | Silk over pads or mask openings | L-18 | script | R+ |
-| LAY-13 | Hot-loop area measured; switch node identified from the capture's pin table | L-11 | script + visual | P+ |
-| LAY-14 | FB trace to SW node and inductor: distance measured | L-28 | script + visual | R+ |
+| LAY-13 | Hot-loop area measured along the copper (plan + vertical) against ≤ 2.0 mm², closed on the component layer with no via, HF cap ≤ 1.0 mm from its pins; switch node identified from the capture's pin table (`dcdc-layout/scripts/check_regulator.py`) | L-11 | script + visual | P+ |
+| LAY-14 | FB, VOS/sense and strap traces against SW copper and the inductor body: route within 1.0 mm of SW past a 1.0 mm escape ≤ 0.5 mm on the component layer, none over the inductor; SW on one layer, no vias (`check_regulator.py`) | L-28 | script + visual | R+ |
 | LAY-15 | Crystal: load caps, trace length, guard, nothing underneath | L-13 | script + visual | P+ |
 | LAY-16 | GND pours on **every** copper layer, not just the plane: island count, largest-island share and filled area against outline per layer; no track splitting a pour into two large islands; one zone per net per layer (no stacked same-net zones); necks wider than the widest trace crossing them | L-23 | script (`pour-fill`, `pour-split`, `zone-overlap`) + visual | R+ |
 | LAY-17 | Continuous reference plane under every high-speed, clock, diff-pair and switch net | L-23 | visual + script | R+ |
@@ -78,6 +78,8 @@ say which, and mark anything assumed.
 | LAY-58 | Shunt Kelvin sense: each sense pair leaves the shunt from the inner edge of its pads (or its sense pads), with no current-path copper, pour or via between the pad and the takeoff; runs as a pair at minimum spacing on one layer to the amplifier or ADC; filter at the amplifier end; clear of switch nodes and the bridge's current loop. Distance to the nearest switch node stated | L-49 | script + visual | R+ |
 | LAY-59 | Gate drive: each gate routed with its return (source, Kelvin source or the driver's return pin) as a pair; loop area and length per gate measured and stated; gate resistor where the schematic means it; bootstrap cap loop at its pins; high-voltage clearance kept on the bootstrap and high-side nets | L-49, L-28 | script + visual | R+ |
 | LAY-60 | Converter inputs, reference and interfaces: ADC differential inputs as pairs, REFIN/REFOUT caps at the pin, over solid ground and clear of switch nodes and digital clocks; converter and isolator clock, data-ready and SPI lines short, over continuous ground, with the schematic's series terminations, clocks clear of the analog inputs | L-49, L-23 | script + visual | R+ |
+| LAY-62 | Every switching regulator passes the cell check (`dcdc-layout/scripts/check_regulator.py`, one spec entry per regulator, every check listed with its number), or each failing check is an accepted exception in the routing spec | L-11, L-23, L-28, L-29, L-62 | script + visual | P+ |
+| LAY-63 | Each regulator cap's ground pad reaches the regulator's ground pin on its own net; no ground via lands on another net's plane; separate analog/power grounds joined only where the datasheet says; EN/MODE tied to VIN at the input cap | L-62, L-63 | script | P+ |
 | LAY-61 | Planes and rails drawn, not routed: every plane and rail is a zone shape (one outline per rail per layer, from the power tree), the pin vias came from the pin-via pass, and no track on a plane layer was drawn by a router (welds, plane-repair chains); the routing logs show the plane layers forbidden (`-1`) in every pass | L-36, L-35, L-39 | script (`plane-track`, logs) + visual | R+ |
 
 ---

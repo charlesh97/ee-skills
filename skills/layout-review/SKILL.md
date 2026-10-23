@@ -154,7 +154,8 @@ distance** — a sign error fails every decoupling cap with great confidence.
 Compute and show the numbers: decap pad-to-power-pin distance, as-built minimum
 trace width per net, diff-pair gap and skew, via count per power net with a
 stated per-via current assumption, copper-to-edge, courtyard overlap, silk over
-pads, hot-loop area, feedback-to-switch-node distance, and each fiducial's
+pads, hot-loop area, feedback-to-switch-node distance (both from
+`dcdc-layout/scripts/check_regulator.py`, LAY-13/14/62/63), and each fiducial's
 distance to its nearest board corner with the spread of the set against the
 board diagonal (LAY-53, from placement on). Where a number depends on
 current or dissipation, get it from the human or the capture and say which.
