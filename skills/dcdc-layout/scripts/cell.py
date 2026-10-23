@@ -346,10 +346,15 @@ def fit(a):
     keep_out = [sps(z.Outline()) for z in b.Zones() if z.GetIsRuleArea()]
     keep_out = [k for k in keep_out if k is not None]
     edge = None
+    ps = pcbnew.SHAPE_POLY_SET()
     try:
-        ps = pcbnew.SHAPE_POLY_SET(); b.GetBoardPolygonOutlines(ps); edge = sps(ps)
-    except Exception:
-        pass
+        b.GetBoardPolygonOutlines(ps, False)          # KiCad 10: (outlines, aInferOutlineIfNecessary)
+    except TypeError:
+        b.GetBoardPolygonOutlines(ps)                 # older pcbnew
+    edge = sps(ps)
+    if edge is None:
+        sys.exit("fit: the board has no closed Edge.Cuts outline, so poses can't be checked against the edge")
+    inside = edge.buffer(-a.edge_clearance)
     T = lambda items: (STRtree([g for _, g in items]) if items else None, items)
     TO = {k: T(v) for k, v in obs.items()}; TH = T(holes); TT = {k: T(v) for k, v in trk.items()}; TV = T(ovias)
     TP = {k: (STRtree([g for _, _, g in v]) if v else None, v) for k, v in padobs.items()}
@@ -379,7 +384,7 @@ def fit(a):
                 parts, area, bad = set(), 0.0, []
                 for r, (g, sd) in cyd.items():
                     G = affine_transform(g, M)
-                    if edge is not None and not edge.buffer(-0.3).contains(G): bad.append(f"{r} off the board")
+                    if not inside.contains(G): bad.append(f"{r} off the board")
                     for (o, og) in hits(TO[sd], G):
                         if o in free_ok: continue
                         parts.add(o); area += og.intersection(G).area
@@ -395,6 +400,7 @@ def fit(a):
                     vh |= {id(og) for (on, og) in hits(TV, G) if on != net}
                 for (net, g) in vias:
                     G = affine_transform(g, M)
+                    if not inside.contains(G): bad.append("a cell via off the board")
                     for ln in TT: th[ln] += sum(1 for (on, og) in hits(TT[ln], G) if on != net)
                     vh |= {id(og) for (on, og) in hits(TV, G) if on != net}
                 th = {k: v for k, v in th.items() if v}
@@ -438,5 +444,6 @@ ft.add_argument("--parts", help="the cell's rigid parts (default: all); the rest
 ft.add_argument("--movable", help="board parts you are willing to move; they are not counted in the way")
 ft.add_argument("--top", type=int, default=10); ft.add_argument("--json")
 ft.add_argument("--clearance", type=float, default=0.2, help="mm kept between cell copper and other-net board pads")
+ft.add_argument("--edge-clearance", type=float, default=0.3, help="mm from the board edge that courtyards and cell vias keep")
 a = ap.parse_args()
 {"extract": extract, "build": build, "place": place, "fit": fit}[a.cmd](a)
