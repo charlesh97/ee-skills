@@ -58,8 +58,14 @@ without a zone. This script covers the rest:
                         (0.6/0.3 on rigid, the no-added-cost via). A warning: each one must
                         sit where the routing spec names the geometry that forced it
   direction       L-26  each signal layer's length by direction. With --directions,
-                        a layer whose declared axis carries less than --min-axis of
-                        its length fails. A plane layer may carry short signal hops
+                        a run (one net's segments chained through two-ended joints)
+                        that advances more than --max-wrong-run mm along the wrong
+                        axis fails, 45s counted by the axis they advance, unless the
+                        routing spec's "direction-exceptions:" line names its net
+                        (NET or NET@LAYER). An inner signal layer whose declared axis
+                        carries less than --min-axis of its length fails; outer layers
+                        (parts and pin escapes) are held to the run cap only. A plane
+                        layer may carry short signal hops
                         (the router prices them high, L-36), so there it fails a net
                         whose track on the plane is longer than --plane-max-run
   edge-margin     L-38  signal or power copper (track, via, pad, pour) closer to the
@@ -117,7 +123,7 @@ short stub on a plane layer). Exit 0 otherwise.
 Run with KiCad's bundled python ($KPY):
   check_copper.py board.kicad_pcb [--profile rigid|flex] [--stage routed|final]
                   [--directions F.Cu=H,In1.Cu=plane,In2.Cu=V,B.Cu=H]
-                  [--min-axis 0.6] [--plane-max-run 3] [--json out.json] [--list 5]
+                  [--min-axis 0.8] [--max-wrong-run 5] [--plane-max-run 3] [--json out.json] [--list 5]
                   [--edge-margin 1.0] [--edge-margin-fail] [--ring-net GND] [--ring-layers F.Cu,B.Cu]
                   [--ring-coverage 0.9] [--stitch-pitch 5]
                   [--pin-via-track 1.5] [--power-nets N,..] [--ground-nets GND] [--entry-radius 1.0]
@@ -284,7 +290,7 @@ def default_pitch(board):
     return d.GetTrackWidth() + d.GetClearance()
 
 
-def check(board, board_path, directions, min_axis, plane_max_run):
+def check(board, board_path, directions, min_axis, plane_max_run, max_wrong_run=5.0, dir_exceptions=()):
     F = collections.defaultdict(list)
     tracks = [t for t in board.GetTracks() if t.GetClass() == "PCB_TRACK"]
     vias = collections.defaultdict(list)
@@ -474,6 +480,23 @@ def check(board, board_path, directions, min_axis, plane_max_run):
                                    "at": pt(t.GetStart()), "size_mm": mm(t.GetLength())})
         if t.GetLayer() not in poured.get(t.GetNetCode(), ()):
             per_layer[t.GetLayerName()][k] += pcbnew.ToMM(t.GetLength())
+    # wrong-axis runs (L-26): a lane laid on the other layer's axis walls off that layer's lanes
+    outer = {board.GetLayerName(pcbnew.F_Cu), board.GetLayerName(pcbnew.B_Cu)}
+    for chain, pts in chains(uniq, joints):
+        t0 = chain[0]
+        layer, net = t0.GetLayerName(), t0.GetNetname()
+        want = (directions or {}).get(layer)
+        if want not in ("H", "V") or t0.GetLayer() in poured.get(t0.GetNetCode(), ()):
+            continue
+        if net in dir_exceptions or f"{net}@{layer}" in dir_exceptions:
+            continue
+        sx = sum(abs(pcbnew.ToMM(b.x - a.x)) for a, b in zip(pts, pts[1:]))
+        sy = sum(abs(pcbnew.ToMM(b.y - a.y)) for a, b in zip(pts, pts[1:]))
+        wrong = sy if want == "H" else sx
+        if wrong > (sx if want == "H" else sy) and wrong > max_wrong_run:
+            F["direction"].append({"net": net, "layer": layer, "at": pt(pts[0]), "size_mm": round(wrong, 2),
+                                   "why": f"run advances {wrong:.1f} mm along {'V' if want == 'H' else 'H'} on a "
+                                          f"{want} layer, over {max_wrong_run:g} mm"})
     table = {}
     for layer in [board.GetLayerName(l) for l in board.GetEnabledLayers().CuStack()]:
         c = per_layer.get(layer, collections.Counter())
@@ -484,7 +507,7 @@ def check(board, board_path, directions, min_axis, plane_max_run):
         row["declared"] = want
         if want in ("H", "V"):
             row["axis_share"] = round(c[want] / total, 2) if total else None
-            if total and c[want] / total < min_axis:
+            if total and c[want] / total < min_axis and layer not in outer:
                 F["direction"].append({"net": "-", "layer": layer, "at": None, "size_mm": row["axis_share"],
                                        "why": f"{want} carries {row['axis_share']:.0%} of {total:.0f} mm, under {min_axis:.0%}"})
         elif want == "plane" and total > 0:
@@ -720,6 +743,18 @@ def via_size_checks(board, std_drill_mm):
                                    "size_mm": size[1],
                                    "why": f"{size[0]}/{size[1]} via, drill under the house {std_drill_mm}"})
     return F, dict(sizes)
+
+
+def spec_direction_exceptions(path):
+    """NET or NET@LAYER names from "direction-exceptions:" lines of the routing spec (L-26)."""
+    out = set()
+    if not path or not os.path.exists(path):
+        return out
+    for line in open(path):
+        m = re.search(r"direction[-_ ]exceptions\W*?[:=]\s*(.*)", line, re.I)
+        if m:
+            out |= {tok.strip(".") for tok in re.split(r"[\s,;\[\]`*]+", m.group(1)) if tok.strip(".")}
+    return out
 
 
 def spec_allow_list(path):
@@ -1176,7 +1211,11 @@ def main():
     ap.add_argument("--stage", default="routed", choices=["routed", "final"],
                     help="final: a board with pours and no stitch group is reported (stitching is the last pass)")
     ap.add_argument("--directions", help="layer jobs from the routing spec, e.g. F.Cu=H,In1.Cu=plane,In2.Cu=V,B.Cu=H")
-    ap.add_argument("--min-axis", type=float, default=0.6, help="share of a layer's length its axis must carry (draft)")
+    ap.add_argument("--min-axis", type=float, default=0.8,
+                    help="share of an inner signal layer's length its axis must carry, 45s counted against it (draft)")
+    ap.add_argument("--max-wrong-run", type=float, default=5.0,
+                    help="mm a run may advance along its layer's wrong axis (draft); the routing spec's "
+                         "direction-exceptions: line lists the nets exempt")
     ap.add_argument("--plane-max-run", type=float, default=3.0,
                     help="mm of one net's track a plane layer may carry (draft)")
     ap.add_argument("--json", help="write every finding and the direction table here")
@@ -1208,7 +1247,7 @@ def main():
     nc = rules_block("netclasses", {"Default": {"via_drill": 0.3}}, prof)
     ap.add_argument("--allow-via-in-pad", help="L-30: comma list of REF.PAD declared via-in-pad (filled and capped); "
                     "added to the routing spec's allow-via-in-pad line")
-    ap.add_argument("--routing-spec", help="routing spec to read allow-via-in-pad from "
+    ap.add_argument("--routing-spec", help="routing spec to read allow-via-in-pad and direction-exceptions from "
                     "(default review/routing/spec.md beside the board)")
     ap.add_argument("--std-via-drill", type=float, default=nc["Default"]["via_drill"],
                     help="L-32: vias drilled smaller than this are listed as small-via (default drc.json Default class drill)")
@@ -1223,7 +1262,9 @@ def main():
 
     directions = parse_directions(args.directions)
     board = pcbnew.LoadBoard(args.board)
-    F, table = check(board, args.board, directions, args.min_axis, args.plane_max_run)
+    spec = args.routing_spec or os.path.join(os.path.dirname(os.path.abspath(args.board)), "review", "routing", "spec.md")
+    F, table = check(board, args.board, directions, args.min_axis, args.plane_max_run,
+                     args.max_wrong_run, spec_direction_exceptions(spec))
     EF, einfo = edge_checks(board, args.edge_margin, args.ring_net,
                             [l.strip() for l in args.ring_layers.split(",") if l.strip()],
                             args.ring_coverage, args.stitch_pitch)

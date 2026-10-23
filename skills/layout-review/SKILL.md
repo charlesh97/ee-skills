@@ -170,8 +170,10 @@ $KPY <ee-skills>/skills/ee-layout-rules/scripts/check_copper.py <board> \
 It reports off-center via ends (L-33), overlapping and folded-back same-net
 copper, and loops on poured nets (L-34), track on a net's own plane layer
 (L-35), sharp bends, 90° corners and off-angle track (L-25), off-list widths and
-hand tapers (L-20), and each layer's track length by direction against its
-declared job (L-26). Most of these are too small to see in a render, so this is
+hand tapers (L-20), and layer discipline against the declared jobs (L-26): every
+run more than 5 mm on its layer's wrong axis, listed with net and location, and
+each inner signal layer's share on axis against 80%. A wrong-way run is an error
+unless the routing spec's `direction-exceptions:` line names it. Most of these are too small to see in a render, so this is
 their only grade. It runs alongside KRT's `check_weird` (step 4a), which covers
 exact duplicates, dangling copper and removable copper on nets without a zone.
 

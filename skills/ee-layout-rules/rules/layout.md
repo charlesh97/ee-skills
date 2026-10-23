@@ -208,11 +208,20 @@ rather than running on top of each other. A plane layer may carry a short
 signal hop where nothing else gets through, but the router prices it high
 (L-36), and a net's track on a plane stays under 3 mm *(draft)*. A long run on
 the plane cuts the return path of every signal above it. On a signal layer, lanes
-run on its axis, and 45° is for bends and short jogs. *(draft)* At least 60% of a
-signal layer's track length runs on its axis. `../scripts/check_copper.py
---directions` grades it; a layer where H, V and 45° are all heavy has no job. A
+run on its axis, and 45° is for bends and short jogs. *(draft)* No run (one net's
+track chained end to end on one layer) advances more than 5 mm along its layer's
+wrong axis, 45s counted by the axis they advance. A run may end in a short neck-up
+to its pin, but a wrong-way lane walls off every right-way lane it crosses. Runs
+that must break this (a diff pair, power copper, a fixed critical path) are named
+in the routing spec's `direction-exceptions:` line. *(draft)* At least 80% of an
+inner signal layer's track length runs on its axis; outer layers carry parts and
+pin escapes, so they are held to the run cap only. `../scripts/check_copper.py
+--directions` grades both; a layer where H, V and 45° are all heavy has no job. A
 router's direction preference is a soft cost, so declare the jobs and grade the
-result; don't assume the router held them. Avoid needless layer changes, and
+result; don't assume the router held them. Measured on a 6-layer motor-driver
+board (2026-10-23): at KiCadRoutingTools' default preference cost both inner
+layers came out under 40% on axis with 75 runs over the cap, and about 50 of its
+280 signal opens had no clean lane only because of those runs. Avoid needless layer changes, and
 keep vias off pads (except required via-in-pad, L-30) and out of finger fields.
 
 **L-27 Fine-pitch escapes are tidy and symmetric**, not a tangle of detours.

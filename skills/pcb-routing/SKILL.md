@@ -296,9 +296,16 @@ Also:
     gives F=H, In1=V, In2=H, B=V. With a plane on In1, that puts the one
     adjacent signal pair, In2 and B, at right angles, as L-26 wants. Pass the
     same order to every step. The preference is a soft cost
-    (`--direction-preference-cost`, taken by `route.py` and `route_diff.py`).
-    Read its current default in `py_router/routing_defaults.py`, because KRT's
-    playbook and code have disagreed on it, and record the value used.
+    (`--direction-preference-cost`, taken by `route.py` and `route_diff.py`),
+    charged per 0.1 mm off-axis step against 1,000 per step, while a via costs
+    `--via-cost` steps (75 by default). So a wrong-way run beats a via pair
+    while it is shorter than 15,000 / cost mm at the default via cost: 60 mm at
+    a cost of 250. Set the cost so break-even sits at the L-26 run cap, 3,000
+    for 5 mm. Read the current default in `py_router/routing_defaults.py`,
+    because KRT's playbook and code have disagreed on it, grade completion
+    against the default on a copy, and record the value used. Hand-laid route
+    tables get the same check: an H leg advances in x, a V leg in y, except the
+    neck-up to a pin.
   - **Plane layers are forbidden** (L-36). Pass `--layer-costs` in
     `--layers` order with `-1` on every plane layer, GND and rail planes
     alike, in every KRT step, for example
@@ -473,7 +480,7 @@ neither of them covers everything alone:
 | a via in an SMD pad or paste aperture, same net included, not declared via-in-pad | L-30 | `check_copper` `via-in-pad` |
 | bends sharper than 90°, 90° corners, off-angle track | L-25 | `check_copper` `sharp-bend`, `right-angle`, `odd-angle` |
 | widths in no class and not on the list (hand tapers) | L-20 | `check_copper` `off-list-width` |
-| a layer's length not on its declared axis; a net running more than 3 mm on a plane layer | L-26 | `check_copper` `direction` |
+| a run more than 5 mm on its layer's wrong axis (unless in `direction-exceptions:`); an inner signal layer under 80% on axis; a net running more than 3 mm on a plane layer | L-26 | `check_copper` `direction` |
 | signal or power copper within the edge margin; the GND ring missing or broken; ring stretches without stitching vias | L-38 | `check_copper` `edge-margin`, `edge-ring`, `edge-stitch` |
 | a power pad without its own via; a ground pad without one; one via shared by several pins | L-39 | `check_copper` `power-pin-via`, `gnd-pin-via`, `shared-pin-via` |
 | a GND fill island with too few vias to the plane; a GND zone that fills little of its outline; a pour cut into two large islands by one track | L-23, L-43 | `check_copper` `pour-island`, `pour-fill`, `pour-split` |
