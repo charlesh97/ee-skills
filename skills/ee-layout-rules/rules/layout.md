@@ -351,8 +351,8 @@ one before it is done and checked:
    route them well. Their copper is locked only during a parallel merge round
    (L-49). No autorouter runs before this step is done.
 5. **Everything else,** by the autorouter if you like, on the signal layers
-   in their directions, with the critical copper kept (no rip-up of existing
-   tracks) and the plane layers forbidden. This is the only step an autorouter runs on its
+   in their directions, with the critical copper kept (locked on the stage
+   copy for the pass only, L-49) and the plane layers forbidden. This is the only step an autorouter runs on its
    own.
 6. **Congestion.** If step 5 can't finish because the signal layers are
    full, add layers. Don't route over the plane (L-37).
@@ -600,12 +600,14 @@ more than one attached track end; it fails on balls and warns elsewhere.
 with pcbnew's interactive router, or as an exact path a script lays from the
 pad along a stated corridor and layer. Each one is looked at in a render
 against its rule below before any autorouter pass. The autorouter gets only
-what is left and keeps the critical copper: it routes the remaining
-connections without ripping up existing tracks, and its result is checked
-against the recorded critical items. **Lock copper only while a parallel merge
-round is open; unlock everything except footprints when it closes.** Locked
-tracks and vias can't be pushed or moved by the interactive router, and the
-board is still being routed after the critical pass. An autorouter
+what is left and keeps the critical copper, and its result is checked against
+the recorded critical items. **Lock copper only while a parallel merge round is
+open; unlock everything except footprints when it closes.** Locked tracks and
+vias can't be pushed or moved by the interactive router, and the board is
+still being routed after the critical pass. An autorouter pass counts as such
+a round: KiCadRoutingTools rips unlocked copper that isn't on its nets even with
+`--keep-input-copper`, so lock everything outside the pass's nets on its stage
+copy and unlock it when the pass is merged back. An autorouter
 works for completion, not for loop area, pairing or what a net runs past: it
 routes a Kelvin pair as two unrelated nets and a gate as a long loop. On a
 motor-driver board (2026-10-22) the first autoroute pass, at 67% routed, had routed

@@ -333,8 +333,9 @@ If you use `pcb-free-agent`, hand it a board with steps 1 to 3 done and
 accepted, give it the layer order and the layer costs, and check its manifest
 didn't touch the critical copper (compare its UUIDs with
 `review/routing/critical.md`) or the plane layers. Copper is locked only while
-a parallel merge round is open; unlock everything except footprints when it
-closes (L-49). If you run the chain yourself:
+a parallel merge round or an autorouter pass is open (KRT rips unlocked copper
+outside its nets even with `--keep-input-copper`); unlock everything except
+footprints when it closes (L-49). If you run the chain yourself:
 
 1. **Planes, rails and pin vias, drawn, not routed** (L-36 step 2), with the
    edge ground ring (L-38): draw the ring in the edge band on the outer layers
