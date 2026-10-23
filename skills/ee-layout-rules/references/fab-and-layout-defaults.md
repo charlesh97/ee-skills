@@ -101,3 +101,55 @@ Rules of thumb that follow from the table:
   doubles lead time and price per step.
 
 ---
+
+## 3. How much current a via carries (L-39, L-21)
+
+The house value is `../rules/drc.json` `pin_vias.via_amps`. This section is how
+it was worked out, so it can be redone for another fab, plating or via.
+
+**Method.** A via barrel is a copper tube: finished hole d, plated wall t, so
+its cross-section is A = π·t·(d + t). Rate that area as an *internal*
+conductor at a **10 °C rise**, with the IPC-2221 curve
+I = 0.024 · ΔT^0.44 · A^0.725 (I in A, ΔT in °C, A in mil²), and round down.
+IPC-2152 replaced that curve for traces, and its data shows the IPC-2221
+internal curve is conservative. A barrel is short and tied to planes at both
+ends, so it runs cooler than the curve says, which is the margin. The
+internal curve and a 10 °C rise are chosen because a barrel is buried in the
+board and can't shed heat to air, and because a via under a hot part already
+starts warm.
+
+**Plating.** JLCPCB rigid publishes an average hole plating of 18 µm (fetched
+2026-10-22). PCBWay and JLC FPC don't publish one on their capability pages.
+Use the fab's figure, never the outer copper weight: 1 oz outer copper is
+35 µm, about twice the barrel.
+
+| Via (pad/drill, mm) | Barrel area at 18 µm | Computed, 10 °C | `via_amps` |
+|---|---|---|---|
+| 0.6/0.3 (house default) | 0.0180 mm² (27.9 mil²) | 0.74 A | **0.7 A** |
+| 0.45/0.2 | 0.0123 mm² (19.1 mil²) | 0.56 A | **0.5 A** |
+| 0.3/0.15 | 0.0095 mm² (14.7 mil²) | 0.46 A | **0.4 A** |
+
+**Vias per pad**, `ceil(I / via_amps)`, never fewer than one. I is the pad's
+current, the same one L-21 sizes the rail with.
+
+| Pad current up to | 0.6/0.3 | 0.45/0.2 | 0.3/0.15 |
+|---|---|---|---|
+| 0.4 A | 1 | 1 | 1 |
+| 0.7 A | 1 | 2 | 2 |
+| 1.0 A | 2 | 2 | 3 |
+| 1.5 A | 3 | 3 | 4 |
+| 2.0 A | 3 | 4 | 5 |
+| 3.0 A | 5 | 6 | 8 |
+| 4.0 A | 6 | 8 | 10 |
+| 5.0 A | 8 | 10 | 13 |
+| 7.0 A | 10 | 14 | 18 |
+| 10 A | 15 | 20 | 25 |
+
+Above a few amps the count says the pad wants a pour and a via field, not a
+row of vias on a stub: put the vias in a same-net copper area joined to the pad
+along its full side, or in the pad as a filled and capped via-in-pad (L-30).
+A via count sized for heating is a floor. A decoupling cap or a fast switch
+loop may want more vias than its current needs, for inductance (about
+1.3 nH for the full 1.6 mm barrel of a 0.3 mm via, less to a plane near the
+surface); that comes from the loop, not this table.
+

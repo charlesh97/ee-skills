@@ -113,7 +113,14 @@
         "ground_nets": [
           "GND"
         ],
-        "_why": "L-39 (draft): every pad on a power net reaches its own via within max_track_mm of track (via-in-pad counts; a through-hole pad is its own via); every ground pad too, where the pitch allows. check_copper.py grades it."
+        "stub_target_mm": 0.5,
+        "stub_min_width_mm": 0.4,
+        "via_amps": {
+          "0.3": 0.7,
+          "0.2": 0.5,
+          "0.15": 0.4
+        },
+        "_why": "L-39 (draft; amended 2026-10-22): every power pad and every ground pad has its own via, one per pin by default, and a pad carrying more current than one via takes ceil(I / via_amps) of them. The via is in the pad only as a declared, filled and capped via-in-pad (L-30); otherwise adjacent, annular ring to pad edge within stub_target_mm (a target, graded at review), and within max_track_mm of the pad's own track (graded by check_copper.py), joined by a stub at least the smaller of the pad's narrow side and stub_min_width_mm (the Power class width). A through-hole pad is its own via. via_amps: amps per via keyed by finished drill (mm), from the barrel cross-section pi*t*(d+t) at JLC's 18 um average hole plating, rated by the IPC-2221 internal-conductor curve at a 10 C rise and rounded down (0.74, 0.56 and 0.46 A computed); references/fab-and-layout-defaults.md section 3."
       }
     },
     "flex": {
@@ -221,7 +228,10 @@
         "ground_nets": [
           "GND"
         ],
-        "_why": "L-39 (draft): every pad on a power net reaches its own via within max_track_mm of track (via-in-pad counts; a through-hole pad is its own via); every ground pad too, where the pitch allows. check_copper.py grades it."
+        "stub_target_mm": 0.5,
+        "stub_min_width_mm": 0.3,
+        "via_amps": {},
+        "_why": "L-39 (draft; amended 2026-10-22): every power pad and every ground pad has its own via, one per pin by default, and a pad carrying more current than one via takes ceil(I / via_amps) of them. The via is in the pad only as a declared, filled and capped via-in-pad (L-30); otherwise adjacent, annular ring to pad edge within stub_target_mm (a target, graded at review), and within max_track_mm of the pad's own track (graded by check_copper.py), joined by a stub at least the smaller of the pad's narrow side and stub_min_width_mm (the Power class width). A through-hole pad is its own via. via_amps is empty on flex: JLC FPC does not publish its hole plating, so get the plating from the fab and compute the value by the method in references/fab-and-layout-defaults.md section 3 before relying on a via count; until then size by the rigid values with the plating stated as assumed."
       }
     }
   },

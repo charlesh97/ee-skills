@@ -133,9 +133,10 @@ narrowest link, and nothing on the board says why it's there.
 **L-21 Power by current.** Size each rail's width by IPC-2152 from its peak
 current (from the human, or the capture of the part it feeds) at the board's
 copper weight. Compute it and state it. Never size a rail by the signal default,
-and use at least 0.3 mm. Carry the current with enough vias at a stated
-per-via current, so no rail hangs on a single via. *(draft, review
- 2026-10-21)* State each rail's **IR drop** from the routed copper: the path
+and use at least 0.3 mm. Carry the current with enough vias at the
+per-via current in `drc.json` `pin_vias.via_amps` (the method is L-39's), so
+no rail hangs on a single via. *(draft, review 2026-10-21)* State each rail's
+**IR drop** from the routed copper: the path
 resistance from the source to the farthest load at the board's copper weight,
 times the rail's peak current, against the rail's tolerance.
 `../scripts/rail_check.py --rails` computes it (`rail-drop`). At every **power
@@ -323,18 +324,35 @@ one before it is done and checked:
 1. **Layer plan.** Capacity says how many signal layers the board needs
    (L-37). The rest are planes. Every layer's job and direction goes in the
    routing spec.
-2. **Planes and power.** Pour the GND plane, then power: a power plane where
-   capacity allows one, otherwise power pours or wide power tracks by current
-   (L-21). Draw the edge ground ring with them (L-38), and tap every power and
-   ground pin into its plane with its own via (L-39). Refill, and confirm the
-   planes are whole (L-23).
+2. **Planes, rails and pin vias: drawn, not routed.** *(amended 2026-10-22,
+   motor-driver board layout.)* Pour the GND plane, then power: a power plane where
+   capacity allows one, otherwise rail shapes, one zone outline per rail per
+   layer, drawn from the power tree (L-44) around the pads that rail feeds and
+   sized by its current (L-21). Draw the edge ground ring with them (L-38).
+   Then the pin-via pass: every power and ground pad gets its own via, or as
+   many as its current needs, into its plane (L-39), laid by a script or by
+   hand, not by a router pass over the plane nets. A pad outside its rail's
+   shape reaches its own via by a track at the rail's class width on a signal
+   layer; the plane is not stretched to it. Refill, and confirm the planes are
+   whole (L-23) and every power and ground pad is connected (L-35). From here
+   on no router puts copper on a plane layer: every plane layer is forbidden
+   (layer cost -1, not merely priced high) in every routing pass, and the
+   router's own plane repair and island welding are off. Plane-layer track a
+   router drew is ripped out, never kept. On a motor-driver board (2026-10-22), with
+   the plane layers only priced high, KiCadRoutingTools welded GND and the
+   rails together with chains of short repair tracks on In1 and In4, and
+   coarse rail rectangles pulled fat repair tracks out to outlying pads. The
+   fix was hand-drawn rail shapes, a pin-via pass, and -1 on In1 and In4.
 3. **Fine-pitch breakout.** BGA, WLCSP, QFN and connector escapes, onto the
    signal layers, with vias landing on real plane fill.
-4. **Critical nets.** Diff pairs, length groups, clocks, switch nodes and
-   sensitive analog, while there is still room to route them well.
-5. **Everything else,** on the signal layers in their directions, with the
-   plane layers priced high, so a hop onto a plane is the last resort and
-   never the easy path.
+4. **Critical nets, deliberately** (L-49). Every net on the routing spec's
+   critical list, not only the ones that cross between blocks: routed by hand
+   or as an exact scripted path, looked at, and locked, while there is still
+   room to route them well. No autorouter runs before this step is done.
+5. **Everything else,** by the autorouter if you like, on the signal layers
+   in their directions, with the critical copper locked and kept and the
+   plane layers forbidden. This is the only step an autorouter runs on its
+   own.
 6. **Congestion.** If step 5 can't finish because the signal layers are
    full, add layers. Don't route over the plane (L-37).
 7. **Stitch, last** (L-43). Once routing is closed and clean, lay the GND
@@ -342,7 +360,8 @@ one before it is done and checked:
    delete the group, route, then stitch again.
 
 Signals first and planes last is what leaves a four-layer board with every
-layer full of track and no plane. Nothing in the pile of copper stops you
+layer full of track and no plane. An autorouter first is what leaves the
+critical nets routed for completion instead of for what they carry. Nothing in the pile of copper stops you
 doing it, and the board still passes DRC.
 
 **L-37 Layer count comes from capacity.** Before routing, measure how many
@@ -387,13 +406,46 @@ on an outer layer) fails, `edge-margin` (copper in the band) and
 `edge-stitch` warn, and `--edge-margin-fail` makes `edge-margin` fail. The
 default is `drc.json` `edge_ring.margin_severity`.
 
-**L-39 A via for every power and ground pin.** Every pad on a power net gets
-its own via to that rail's plane or pour. The via sits in the pad (via-in-pad,
-L-30, where the pitch needs it) or within `drc.json` `pin_vias.max_track_mm`
-of the pad's own track, 1.5 mm *(draft)*. Every ground pad gets its own via to
-the GND plane too, wherever the pitch allows. That covers decoupling
-capacitors at both ends, IC supply and ground pins, regulator inputs and
-outputs, and connector power pins.
+**L-39 A via for every power and ground pin.** *(draft; amended 2026-10-22,
+motor-driver board layout: one via per pin as the default for ground as well as
+power, a via count by current, and a stated stub.)* Every pad on a power net
+gets its own via to that rail's plane or pour, and every ground pad gets its
+own via to the GND plane. By default that is one via per pin: a decoupling
+cap has one power via and one GND via, an IC supply pin one, its ground pin
+one. That covers decoupling capacitors at both ends, IC supply and ground
+pins, regulator inputs and outputs, and connector power pins. Ground is not
+optional: a ground pad without a via is a miss unless it is on the exception
+list below.
+
+*Count by current.* A pad whose current is more than one via carries takes
+as many vias as its current needs: `ceil(I / I_via)`, never fewer than one,
+where I is the pad's current (the same peak current L-21 sizes the rail with,
+from the human or the capture of the part, stated) and `I_via` is the per-via
+current in `drc.json` `pin_vias.via_amps` for the via used. For the house
+0.6/0.3 via that is 0.7 A, so 1.5 A takes three vias and 5 A takes eight.
+The method and the table are in `../references/fab-and-layout-defaults.md`
+§3: the barrel's copper cross-section at the fab's plating (JLC 18 µm
+average), rated as an internal conductor at a 10 °C rise, rounded down. A
+smaller via carries less, so stepping down (L-32) means more vias. Pulsed
+and high-current pads (motor and gate drive, LED drive, radio PA, a
+regulator's input and output caps, a sense resistor, a connector power pin)
+get their count first and never go on the exception list.
+
+*Where the via sits.* In the pad only where it is a declared via-in-pad
+(L-30): filled and capped, named on the routing spec's `allow-via-in-pad:`
+line. Everywhere else (an unfilled via, fine pitch, a BGA land, a pad whose
+reflow a via would starve) the via sits adjacent, as close as the clearance
+allows: annular ring to pad edge 0.5 mm or less *(draft)*, and never more
+than `pin_vias.max_track_mm` (1.5 mm) of the pad's own track. A BGA
+dog-bone via in the diagonal between lands is adjacent. The pad joins its
+via by a short, wide stub, at least the smaller of the pad's narrow side and
+`pin_vias.stub_min_width_mm` (0.4 mm rigid, the Power class width), and on a
+high-current pad wide enough for the pad's current by L-21. Several vias on
+one pad sit in a row or cluster along its side, each on the stub or on a
+small same-net copper tab off the pad, not strung out along a track. The via
+connects solid to its plane, never through a thermal relief; a relief on the
+pad's own-layer pour (L-29 allows one on an ordinary pad, for soldering) is
+fine, because the via, not the pour, is the pad's connection.
 
 A pad reached only through a pour on its own layer, or daisy-chained along a
 track to a neighbour's via, does not count, and neither does one via shared by
@@ -401,22 +453,26 @@ two pins. Each pin needs its own short, low-inductance path to the plane, and a
 chain puts every pin's current through the first pin's via. A through-hole pad
 is its own via.
 
-Where a ground pad genuinely can't take a via (a landlocked ball at a pitch
-below the via floor, a pad already fed by a solid pour with no room beside it),
-say which pads and why in the routing spec.
+Where a pad genuinely can't take a via (a landlocked ball at a pitch below the
+via floor with no via-in-pad, a pad already fed by a solid pour with no room
+beside it), list it in the routing spec with the reason. The list is for ground
+pads and low-current power pads only, and each one is a finding at review.
 
 Power nets are the rails: nets in a `Power` or `PWR_*` net class (L-03, L-21),
 or those the routing spec names. Grade with `../scripts/check_copper.py`:
 `power-pin-via` fails, `gnd-pin-via` warns at `--stage routed` and fails at
-`--stage final`, and `shared-pin-via` warns. *(draft, review
- 2026-10-21)* The pin vias are placed in the fanout step (L-47), before any
-track, as a locked group; a router that is left to add them adds them where
-it finds room, which is not at the pin. Plan the
-vias at placement: leave room beside every power and ground pad, above all at
-the decoupling caps. Work in order of current: pulsed and high-current rails
-(LED drive, motor, radio PA, a regulator's input and output caps) get their
-vias first and never go on the exception list. The `power-pin-via` report
-names the rail for each pad, so the highest-current misses get fixed first.
+`--stage final`, and `shared-pin-via` warns. The script finds a pad's nearest
+via; the via count against current and the stub width are graded by hand at
+review (layout-review LAY-56), from the `pad-currents:` block of the routing
+spec (`Q1.5 = 6 A (capture)`). *(draft, review 2026-10-21)* The pin vias are
+placed in the fanout step (L-47), before any track, as a locked group; a router
+that is left to add them adds them where it finds room, which is not at the
+pin. Plan the vias at placement: leave room beside every power and ground pad
+for its full count, above all at the decoupling caps and the high-current
+parts. Work in order of current: pulsed and high-current rails (LED drive,
+motor, radio PA, a regulator's input and output caps) get their vias first and
+never go on the exception list. The `power-pin-via` report names the rail for
+each pad, so the highest-current misses get fixed first.
 
 **L-43 Stitch every GND pour, last, as one group.** Every GND pour on every
 layer (outer-layer fill, inner pours, the edge ring) ties to the GND plane
@@ -536,6 +592,51 @@ length of its centre. A trunk that forks at a ball puts the ball's current
 and the branch's current through one 0.2 mm land, and it is the first thing a
 reviewer sees. `../scripts/check_copper.py` `pad-junction` counts pads with
 more than one attached track end; it fails on balls and warns elsewhere.
+
+**L-49 Critical nets are routed on purpose, before the autorouter.**
+*(draft, 2026-10-22, motor-driver board layout.)* The routing spec carries a
+`critical-nets:` list, and every net on it is routed deliberately: by hand
+with pcbnew's interactive router, or as an exact path a script lays from the
+pad along a stated corridor and layer. Each one is looked at in a render
+against its rule below, then locked, before any autorouter pass. The
+autorouter gets only what is left, and keeps the locked copper. An autorouter
+works for completion, not for loop area, pairing or what a net runs past: it
+routes a Kelvin pair as two unrelated nets and a gate as a long loop. On a
+motor-driver board (2026-10-22) the first autoroute pass, at 67% routed, had routed
+the Kelvin sense, gate and REFIN nets badly, and they were ripped up to be
+routed by hand.
+
+The list is every critical net on the board, not only the ones that cross
+between blocks. Build it from the schematic and the captures, and include at
+least each of these the board has:
+
+- **Diff pairs** (USB, CAN, Ethernet and EtherCAT, LVDS, RS-422 encoder
+  lines): routed as pairs (L-22) over a continuous reference (L-23).
+- **Shunt Kelvin sense.** Taken from the inner edge of the shunt's pads, or
+  its sense pads, never from the current path, a pour or a via in it. The two
+  lines run as a tight pair at minimum spacing, on one layer, to the
+  amplifier or ADC input, with the filter at the amplifier end, clear of
+  switch nodes and the bridge's current loop.
+- **Gate drive.** Each gate track runs with its return (the FET's source,
+  Kelvin source where the part has one, or the driver's return pin) as a
+  pair, with the loop as short and small as placement allows, and its length
+  and loop stated. The gate resistor sits where the schematic means it.
+- **Bootstrap and switch nodes.** The bootstrap cap's loop tight to its
+  pins; switch-node copper no bigger than the current needs (L-28), with its
+  high-voltage clearance class kept.
+- **ADC inputs and reference.** Differential inputs as pairs; REFIN and
+  REFOUT with their caps at the pin; all of it over solid ground, away from
+  switch nodes and digital clocks.
+- **ADC and isolator interfaces.** Clock, data-ready and SPI data between a
+  converter or isolator and the MCU: short, over continuous ground, with the
+  series terminations the schematic has, and clocks clear of the analog
+  inputs.
+- **Clocks and crystals** (L-13), **feedback and sense lines** (L-28, L-44),
+  and anything a capture's layout guidance names.
+
+Each entry names the net or nets, the rule it is routed to, its layers, and
+what was checked; an entry left to the autorouter says why. layout-review
+grades it (LAY-57 to LAY-60).
 
 ---
 
