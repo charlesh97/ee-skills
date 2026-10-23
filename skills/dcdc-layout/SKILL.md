@@ -54,7 +54,7 @@ Tools: KiCad 10's Python (`$KPY`, with shapely and Pillow; the KiCadRoutingTools
 | `scripts/cell.py extract BOARD --refs IC,L,C... --origin X,Y` | Turns a laid-out cell (a demo board, or a good cell on another board) into a cell spec in the IC's frame. |
 | `scripts/cell.py build CELL.json --source BOARD -o DEMO` | Builds a demo board from a spec, with the source board's stackup, net classes and footprints. |
 | `scripts/cell.py fit CELL.json --target BOARD --region X0,Y0,X1,Y1 [--parts CORE] [--movable REFS]` | Searches positions and rotations for the cell on a board and ranks them by what is in the way (parts, holes, keep-outs, the edge, other-net vias and tracks under its copper). Read only. |
-| `scripts/cell.py place CELL.json --target BOARD --at X,Y --rot R -o COPY` | Places a cell onto a copy of a board: moves its parts, replaces the copper on its private nets, adds its pours without stacking a zone on one the board already has. |
+| `scripts/cell.py place CELL.json --target BOARD --at X,Y --rot R -o COPY` | Places a cell onto a copy of a board: moves its parts and replaces the copper on its private nets. Each pour on a shared net is skipped where a board pour of that net covers it, merged into a board pour it overlaps, and added where it touches none, so zones never stack (L-23). It prints which happened. |
 
 ## Method
 

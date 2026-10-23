@@ -16,8 +16,9 @@ tracks), stored as JSON in the cell's own frame (mm, the IC's centre at 0,0 unle
   $KPY cell.py place cell.json --target BOARD --at X,Y [--rot DEG] -o OUT.kicad_pcb [--project X.kicad_pro]
         Writes a copy of BOARD with the cell placed at (X,Y,rot): moves the cell's footprints, removes the
         target's copper on the cell's private nets (nets whose every pad is in the cell), and adds the
-        cell's copper. Zones of shared nets (GND, the input and output rails) are added only where the
-        target has no zone of that net on that layer, so no zone is stacked (L-23). Never writes BOARD.
+        cell's copper. A cell pour of a shared net (GND, the input and output rails) is skipped where a board
+        pour of that net already covers it, merged into a board pour it overlaps (one zone per net per layer,
+        L-23), and added where it touches none. Never writes BOARD.
 
   $KPY cell.py fit cell.json --target BOARD --region X0,Y0,X1,Y1 [--parts IC,L,CIN,COUT] [--movable REFS] [--prefer X,Y]
         Read only. Tries every pose on a grid in the region at each rotation and ranks them: board parts whose
@@ -228,11 +229,41 @@ def place(a):
     for t in gone: b.Remove(t)
     for z in zgone: b.Remove(z)
     place_fps(b, fps, spec, at, rot)
-    have = {(z.GetNetname(), b.GetLayerName(l)) for z in b.Zones() if not z.GetIsRuleArea() for l in z.GetLayerSet().CuStack()}
-    skip = {(z["net"], z["layer"]) for z in spec.get("zones", []) if z["net"] in shared and (z["net"], z["layer"]) in have}
-    lay_copper(b, spec, at, rot, skip)
-    print(f"private nets {len(private)}, shared {len(shared)}: removed {len(gone)} tracks/vias and {len(zgone)} zones; "
-          f"skipped cell zones already poured on the target: {sorted(f'{n.split(chr(47))[-1]}@{l}' for n, l in skip)}")
+    # Shared-net cell pours (VIN, the output rail, GND) against the target's pours of the same net on the same layer:
+    # covered by one -> it is already copper, skip; overlapping one -> merge into it (one zone per net per layer, L-23);
+    # touching none -> add it. A same-net pour elsewhere on the layer is a separate pour and does not count.
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+    tz = []
+    for z in b.Zones():
+        if z.GetIsRuleArea() or z.GetNetname() not in shared: continue
+        polys = [Polygon(o).buffer(0) for o in outline_pts(z) if len(o) > 2]
+        for l in z.GetLayerSet().CuStack(): tz.append((z, b.GetLayerName(l), polys))
+    notes, rest = [], []
+    for cz in spec.get("zones", []):
+        if cz["net"] not in shared: rest.append(cz); continue
+        P_ = Polygon([xf(p, at, rot) for p in cz["pts"]]).buffer(0)
+        same = [(z, ps) for (z, ln, ps) in tz if z.GetNetname() == cz["net"] and ln == cz["layer"]
+                and any(pp.intersection(P_).area > 0.01 for pp in ps)]
+        tag = f"{cz['net'].split('/')[-1]}@{cz['layer']}"
+        if any(pp.buffer(0.01).contains(P_) for (z, ps) in same for pp in ps):
+            notes.append(f"{tag} covered by a board pour, skipped"); continue
+        if same:
+            z, ps = same[0]
+            U = unary_union(ps + [P_])
+            if U.geom_type == "Polygon" and len(same) == 1:
+                sp = pcbnew.SHAPE_POLY_SET(); sp.NewOutline()
+                for (x, y) in list(U.exterior.coords)[:-1]: sp.Append(iu(x), iu(y))
+                for h in U.interiors:
+                    hi = sp.NewHole()
+                    for (x, y) in list(h.coords)[:-1]: sp.Append(iu(x), iu(y), 0, hi)
+                z.SetOutline(sp); KEEP.append(sp)
+                notes.append(f"{tag} merged into board zone '{z.GetZoneName()}'"); continue
+            notes.append(f"{tag} overlaps {len(same)} board pour(s) that do not merge into one outline: added alongside, CHECK L-23")
+        rest.append(cz)
+    lay_copper(b, dict(spec, zones=rest), at, rot, skip=set())
+    print(f"private nets {len(private)}, shared {len(shared)}: removed {len(gone)} tracks/vias and {len(zgone)} zones")
+    for n_ in notes: print("  " + n_)
     save(b, a.o, a.project)
 
 
@@ -273,11 +304,15 @@ def fit(a):
         g = affine_transform(g, [c, s_, -s_, c, pos[0] - c * pos[0] - s_ * pos[1], pos[1] + s_ * pos[0] - c * pos[1]])
         return affine_transform(g, [1, 0, 0, 1, e["at"][0] - pos[0], e["at"][1] - pos[1]])
     cyd = {r: (to_cell(court(fps[r]), fps[r], spec["footprints"][r]), spec["footprints"][r].get("side", "F")) for r in rigid}
-    have = {(z.GetNetname(), b.GetLayerName(l)) for z in b.Zones() if not z.GetIsRuleArea() and z.GetNetname() not in private
-            for l in z.GetLayerSet().CuStack()}
+    # target pours of the cell's nets: a cell pour that one of them covers at a pose is not new copper there
+    pours = collections.defaultdict(list)
+    for z in b.Zones():
+        if z.GetIsRuleArea() or z.GetNetname() in private or z.GetNetname() not in nets: continue
+        for l in z.GetLayerSet().CuStack():
+            pours[(z.GetNetname(), b.GetLayerName(l))] += [Polygon(o).buffer(0) for o in outline_pts(z) if len(o) > 2]
     cu = []
-    for z in spec.get("zones", []):     # a pour the board already has (its GND fill) gives way; it is not cell copper
-        if z["layer"] in ("F.Cu", "B.Cu") and (z["net"], z["layer"]) not in have:
+    for z in spec.get("zones", []):
+        if z["layer"] in ("F.Cu", "B.Cu"):
             cu.append((z["layer"], z["net"], Polygon(z["pts"]).buffer(0)))
     for t in spec.get("tracks", []):    # every layer: a buried sense route (VOS on In3) crosses the board's inner lanes too
         cu.append((t["layer"], t["net"], LineString(t["pts"]).buffer(t["w"] / 2)))
@@ -340,6 +375,7 @@ def fit(a):
                 vh, th = set(), collections.Counter()
                 for (ln, net, g) in cu:
                     G = affine_transform(g, M)
+                    if any(pp.buffer(0.01).contains(G) for pp in pours.get((net, ln), [])): continue   # the board pours it already
                     th[ln] += sum(1 for (on, og) in hits(TT[ln], G) if on != net)
                     vh |= {id(og) for (on, og) in hits(TV, G) if on != net}
                 for (net, g) in vias:
