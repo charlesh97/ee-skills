@@ -59,10 +59,13 @@ without a zone. This script covers the rest:
                         sit where the routing spec names the geometry that forced it
   direction       L-26  each signal layer's length by direction. With --directions,
                         a run (one net's segments chained through two-ended joints)
-                        that advances more than --max-wrong-run mm along the wrong
-                        axis fails, 45s counted by the axis they advance, unless the
-                        routing spec's "direction-exceptions:" line names its net
-                        (NET or NET@LAYER). An inner signal layer whose declared axis
+                        fails when less than --run-axis of its travel (summed |dx| +
+                        |dy|, so a 45 counts half to each axis) is along its layer's
+                        axis, unless its wrong-axis travel is under three Default
+                        pitches (a neck-up to a pin) or the routing spec's
+                        "direction-exceptions:" line names its net (NET or NET@LAYER).
+                        On F/B (parts and pin escapes) the same runs are listed as
+                        direction-outer, a warning. An inner signal layer whose declared axis
                         carries less than --min-axis of its length fails; outer layers
                         (parts and pin escapes) are held to the run cap only. A plane
                         layer may carry short signal hops
@@ -123,7 +126,7 @@ short stub on a plane layer). Exit 0 otherwise.
 Run with KiCad's bundled python ($KPY):
   check_copper.py board.kicad_pcb [--profile rigid|flex] [--stage routed|final]
                   [--directions F.Cu=H,In1.Cu=plane,In2.Cu=V,B.Cu=H]
-                  [--min-axis 0.8] [--max-wrong-run 5] [--plane-max-run 3] [--json out.json] [--list 5]
+                  [--min-axis 0.8] [--run-axis 0.67] [--plane-max-run 3] [--json out.json] [--list 5]
                   [--edge-margin 1.0] [--edge-margin-fail] [--ring-net GND] [--ring-layers F.Cu,B.Cu]
                   [--ring-coverage 0.9] [--stitch-pitch 5]
                   [--pin-via-track 1.5] [--power-nets N,..] [--ground-nets GND] [--entry-radius 1.0]
@@ -290,7 +293,7 @@ def default_pitch(board):
     return d.GetTrackWidth() + d.GetClearance()
 
 
-def check(board, board_path, directions, min_axis, plane_max_run, max_wrong_run=5.0, dir_exceptions=()):
+def check(board, board_path, directions, min_axis, plane_max_run, run_axis=0.67, dir_exceptions=()):
     F = collections.defaultdict(list)
     tracks = [t for t in board.GetTracks() if t.GetClass() == "PCB_TRACK"]
     vias = collections.defaultdict(list)
@@ -482,6 +485,7 @@ def check(board, board_path, directions, min_axis, plane_max_run, max_wrong_run=
             per_layer[t.GetLayerName()][k] += pcbnew.ToMM(t.GetLength())
     # wrong-axis runs (L-26): a lane laid on the other layer's axis walls off that layer's lanes
     outer = {board.GetLayerName(pcbnew.F_Cu), board.GetLayerName(pcbnew.B_Cu)}
+    stub = 3 * pcbnew.ToMM(default_pitch(board))  # a neck-up this short crosses no more than three lanes
     for chain, pts in chains(uniq, joints):
         t0 = chain[0]
         layer, net = t0.GetLayerName(), t0.GetNetname()
@@ -493,10 +497,11 @@ def check(board, board_path, directions, min_axis, plane_max_run, max_wrong_run=
         sx = sum(abs(pcbnew.ToMM(b.x - a.x)) for a, b in zip(pts, pts[1:]))
         sy = sum(abs(pcbnew.ToMM(b.y - a.y)) for a, b in zip(pts, pts[1:]))
         wrong = sy if want == "H" else sx
-        if wrong > (sx if want == "H" else sy) and wrong > max_wrong_run:
-            F["direction"].append({"net": net, "layer": layer, "at": pt(pts[0]), "size_mm": round(wrong, 2),
-                                   "why": f"run advances {wrong:.1f} mm along {'V' if want == 'H' else 'H'} on a "
-                                          f"{want} layer, over {max_wrong_run:g} mm"})
+        share = 1 - wrong / (sx + sy) if sx + sy else 1.0
+        if share < run_axis and wrong > stub:
+            F["direction-outer" if layer in outer else "direction"].append({"net": net, "layer": layer, "at": pt(pts[0]), "size_mm": round(wrong, 2),
+                                   "why": f"run travels {share:.0%} along {want} ({wrong:.1f} of {sx + sy:.1f} mm "
+                                          f"the other way), under {run_axis:.0%}"})
     table = {}
     for layer in [board.GetLayerName(l) for l in board.GetEnabledLayers().CuStack()]:
         c = per_layer.get(layer, collections.Counter())
@@ -1213,9 +1218,9 @@ def main():
     ap.add_argument("--directions", help="layer jobs from the routing spec, e.g. F.Cu=H,In1.Cu=plane,In2.Cu=V,B.Cu=H")
     ap.add_argument("--min-axis", type=float, default=0.8,
                     help="share of an inner signal layer's length its axis must carry, 45s counted against it (draft)")
-    ap.add_argument("--max-wrong-run", type=float, default=5.0,
-                    help="mm a run may advance along its layer's wrong axis (draft); the routing spec's "
-                         "direction-exceptions: line lists the nets exempt")
+    ap.add_argument("--run-axis", type=float, default=0.67,
+                    help="share of each run's travel that must be along its layer's axis (draft); the routing "
+                         "spec's direction-exceptions: line lists the nets exempt")
     ap.add_argument("--plane-max-run", type=float, default=3.0,
                     help="mm of one net's track a plane layer may carry (draft)")
     ap.add_argument("--json", help="write every finding and the direction table here")
@@ -1264,7 +1269,7 @@ def main():
     board = pcbnew.LoadBoard(args.board)
     spec = args.routing_spec or os.path.join(os.path.dirname(os.path.abspath(args.board)), "review", "routing", "spec.md")
     F, table = check(board, args.board, directions, args.min_axis, args.plane_max_run,
-                     args.max_wrong_run, spec_direction_exceptions(spec))
+                     args.run_axis, spec_direction_exceptions(spec))
     EF, einfo = edge_checks(board, args.edge_margin, args.ring_net,
                             [l.strip() for l in args.ring_layers.split(",") if l.strip()],
                             args.ring_coverage, args.stitch_pitch)
@@ -1297,7 +1302,7 @@ def main():
             return False
         return any(f.get("severity", "fail") == "fail" for f in items)
 
-    order = ["via-off-center", "via-over-pad", "via-in-pad", "pad-junction", "overlap", "loop", "sharp-bend", "direction",
+    order = ["via-off-center", "via-over-pad", "via-in-pad", "pad-junction", "overlap", "loop", "sharp-bend", "direction", "direction-outer",
              "entry-vias", "edge-margin", "edge-ring", "edge-stitch", "power-pin-via", "gnd-pin-via", "shared-pin-via",
              "pour-island", "pour-fill", "pour-split", "zone-overlap", "stitch-group",
              "staircase", "jog", "right-angle", "odd-angle", "plane-track", "off-list-width", "small-via"]
