@@ -347,11 +347,12 @@ one before it is done and checked:
    signal layers, with vias landing on real plane fill.
 4. **Critical nets, deliberately** (L-49). Every net on the routing spec's
    critical list, not only the ones that cross between blocks: routed by hand
-   or as an exact scripted path, looked at, and locked, while there is still
-   room to route them well. No autorouter runs before this step is done.
+   or as an exact scripted path and looked at, while there is still room to
+   route them well. Their copper is locked only during a parallel merge round
+   (L-49). No autorouter runs before this step is done.
 5. **Everything else,** by the autorouter if you like, on the signal layers
-   in their directions, with the critical copper locked and kept and the
-   plane layers forbidden. This is the only step an autorouter runs on its
+   in their directions, with the critical copper kept (no rip-up of existing
+   tracks) and the plane layers forbidden. This is the only step an autorouter runs on its
    own.
 6. **Congestion.** If step 5 can't finish because the signal layers are
    full, add layers. Don't route over the plane (L-37).
@@ -465,7 +466,7 @@ or those the routing spec names. Grade with `../scripts/check_copper.py`:
 via; the via count against current and the stub width are graded by hand at
 review (layout-review LAY-56), from the `pad-currents:` block of the routing
 spec (`Q1.5 = 6 A (capture)`). *(draft, review 2026-10-21)* The pin vias are
-placed in the fanout step (L-47), before any track, as a locked group; a router
+placed in the fanout step (L-47), before any track, as one group; a router
 that is left to add them adds them where it finds room, which is not at the
 pin. Plan the vias at placement: leave room beside every power and ground pad
 for its full count, above all at the decoupling caps and the high-current
@@ -571,7 +572,7 @@ silk included, not only the 3D views; an unreadable layer is a finding.
 Decide per ball ring before routing: the outer ring escapes on the surface
 layer with a dogbone to a via wholly outside the ball field; the inner rings
 take a via-in-pad microvia at the ball centre (L-30, declared). Then place
-**every** fanout via first, as one locked group, together with the pin vias of
+**every** fanout via first, as one group, together with the pin vias of
 L-39 and the shared taps of L-43, and only then route. A via is at a pad's
 centre or wholly outside the pad; a via that overlaps a pad's copper partway is
 a defect even when DRC passes it, because the paste and the joint don't know
@@ -598,8 +599,13 @@ more than one attached track end; it fails on balls and warns elsewhere.
 `critical-nets:` list, and every net on it is routed deliberately: by hand
 with pcbnew's interactive router, or as an exact path a script lays from the
 pad along a stated corridor and layer. Each one is looked at in a render
-against its rule below, then locked, before any autorouter pass. The
-autorouter gets only what is left, and keeps the locked copper. An autorouter
+against its rule below before any autorouter pass. The autorouter gets only
+what is left and keeps the critical copper: it routes the remaining
+connections without ripping up existing tracks, and its result is checked
+against the recorded critical items. **Lock copper only while a parallel merge
+round is open; unlock everything except footprints when it closes.** Locked
+tracks and vias can't be pushed or moved by the interactive router, and the
+board is still being routed after the critical pass. An autorouter
 works for completion, not for loop area, pairing or what a net runs past: it
 routes a Kelvin pair as two unrelated nets and a gate as a long loop. On a
 motor-driver board (2026-10-22) the first autoroute pass, at 67% routed, had routed
@@ -639,12 +645,12 @@ what was checked; an entry left to the autorouter says why. layout-review
 grades it (LAY-57 to LAY-60).
 
 **L-50 Size a routing reservation to the route, bind it to its layer, and release it when the route
-locks.** *(draft, 2026-10-23, from a motor-driver board routed by parallel threads.)* A corridor or hold
+is laid.** *(draft, 2026-10-23, from a motor-driver board routed by parallel threads.)* A corridor or hold
 that keeps other work out of a critical route's path is drawn as wide as the route needs, and no wider:
 its track widths, its pair gap, the clearances on both sides, and the via sites it will use. It names
 its layer. A merge or DRC gate checks tracks in a corridor only on that layer, and checks vias on every
 layer, since a via passes through them all. A reservation is lifted, or cut back to the copper laid, as
-soon as its route is laid and locked. Area holds are dated, name their owner, and shrink to what is still
+soon as its route is laid and merged. Area holds are dated, name their owner, and shrink to what is still
 in progress. On the motor-driver board:
 - Current-amplifier output lanes 1.1 mm wide were checked on every layer, which walled off three test
   points that outer-layer tracks could have reached.

@@ -283,7 +283,8 @@ copper.
   yourself from the schematic and the captures, then compare it with the
   routing spec's `critical-nets:` list: a kind the board has and the list
   left out is a finding. For each entry, check it was routed deliberately and
-  locked before the bulk pass, and measure what its L-49 line asks: where
+  laid before the bulk pass, and that no track or via is left locked once the
+  merge rounds are over (L-49), and measure what its L-49 line asks: where
   each Kelvin pair leaves its shunt and how close it runs to a switch node,
   each gate's loop area and length with its return, the reference caps'
   distance to their pins, and the converter interface lengths. Render each

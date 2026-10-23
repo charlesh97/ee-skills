@@ -56,7 +56,7 @@ errors, vias, minutes). Don't use KRT's own failure tally, which undercounts.
 
 | Outcome | Condition | Then |
 |---|---|---|
-| **Done** | 0 unconnected, 0 copper DRC errors, spec widths met, every `critical-nets:` entry routed deliberately, accepted and locked (L-49), no router-drawn copper on a plane layer (L-36), the planes from the layer plan whole, the edge ground ring in place (L-38), a via on every power pin (L-39), every GND pour stitched as one group (L-43), and clean copper: `check_weird` finds nothing, and `check_copper.py` fails nothing but `via-off-center` (step 3) | hand back |
+| **Done** | 0 unconnected, 0 copper DRC errors, spec widths met, every `critical-nets:` entry routed deliberately and accepted (L-49), no track or via left locked (copper is locked only during a parallel merge round), no router-drawn copper on a plane layer (L-36), the planes from the layer plan whole, the edge ground ring in place (L-38), a via on every power pin (L-39), every GND pour stitched as one group (L-43), and clean copper: `check_weird` finds nothing, and `check_copper.py` fails nothing but `via-off-center` (step 3) | hand back |
 | **Good enough (the target)** | ≥ 90% routed, **and** 0 shorts or clearance errors in the routed copper, no part moved, no floor loosened | stop, hand back, and ask whether to keep going |
 | **Out of budget** | the budget below is spent and good-enough isn't reached | stop, hand back the best board, and ask |
 | **Needs more layers** | the layer plan, or a congestion diagnosis re-checked with `layer_capacity.py`, says the signal layers can't hold the nets without taking a plane (L-37) | stop, hand back the numbers, and ask: add layers, re-place, or give up the plane knowingly |
@@ -321,7 +321,7 @@ sake of it.
 
 The autorouter is for the bulk, not for the planes or the critical nets (L-36,
 L-49). KRT's `pcb-free-agent` skill in `route` mode, which never moves a part,
-may run step 4 below, after steps 1 to 3 are done and locked. Its toolbox and
+may run step 4 below, after steps 1 to 3 are done and accepted. Its toolbox and
 traps apply throughout. Its stop rules don't: use the budget in "Success,
 and when to stop" above.
 From inside the checkout that is
@@ -330,8 +330,11 @@ follow its SKILL.md.
 
 **Either way, the order is L-36's, and each step is checked before the next.**
 If you use `pcb-free-agent`, hand it a board with steps 1 to 3 done and
-locked, give it the layer order and the layer costs, and check its manifest
-didn't touch the locked copper or the plane layers. If you run the chain yourself:
+accepted, give it the layer order and the layer costs, and check its manifest
+didn't touch the critical copper (compare its UUIDs with
+`review/routing/critical.md`) or the plane layers. Copper is locked only while
+a parallel merge round is open; unlock everything except footprints when it
+closes (L-49). If you run the chain yourself:
 
 1. **Planes, rails and pin vias, drawn, not routed** (L-36 step 2), with the
    edge ground ring (L-38): draw the ring in the edge band on the outer layers
@@ -349,12 +352,12 @@ didn't touch the locked copper or the plane layers. If you run the chain yoursel
 2. **Fanout, all of it, before any track** (L-47, L-39, L-43). On a board
    with a BGA, a WLCSP or a repeated cell array, run `hdi-breakout` first: it
    plans and places this group and writes the `breakout:` block of the spec,
-   and this step only checks that the group is there and locked. Otherwise decide per ball
+   and this step only checks that the group is there. Otherwise decide per ball
    ring: outer ring on the surface with a dogbone to a via wholly outside the
    ball field, inner rings via-in-pad at the ball centre (declared on the
    spec's `allow-via-in-pad:` line). Place every fanout via, the vias at every power
    entry (two or more per
-   rail, L-21) and, on an HDI stack, the shared GND taps, as one locked group with
+   rail, L-21) and, on an HDI stack, the shared GND taps, as one group with
    the pin vias from step 1.
    `bga_fanout.py` / `qfn_fanout.py --component <ref>` for each BGA, WLCSP, QFN
    and dense connector, with the layer order from step 1, so the escape vias
@@ -374,7 +377,7 @@ didn't touch the locked copper or the plane layers. If you run the chain yoursel
    `route.py --nets` on one entry at a time is allowed only as a draft that
    you then inspect and accept or redo; never a batch of critical nets in one
    pass. Render each one, check it against its L-49 line (pairing, loop,
-   where a Kelvin pair leaves the shunt, what it runs past), then lock it.
+   where a Kelvin pair leaves the shunt, what it runs past), then accept it.
    Record each entry's result in `review/routing/critical.md`. Show the
    human the critical copper before step 4.
 4. **Everything else.** `route.py --nets '*'` with the layer costs (plane
