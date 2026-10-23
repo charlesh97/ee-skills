@@ -22,12 +22,12 @@ tracks), stored as JSON in the cell's own frame (mm, the IC's centre at 0,0 unle
   $KPY cell.py fit cell.json --target BOARD --region X0,Y0,X1,Y1 [--parts IC,L,CIN,COUT] [--movable REFS] [--prefer X,Y]
         Read only. Tries every pose on a grid in the region at each rotation and ranks them: board parts whose
         courtyards the cell's rigid parts hit, holes, keep-outs and the edge, then other-net vias and tracks
-        under the cell's copper. Fit the rigid core first; the periphery is re-seated around it afterwards.
+        under the cell's copper on every layer (a buried sense route counts against the board's inner lanes). Fit the rigid core first; the periphery is re-seated around it afterwards.
 
 pcbnew's SaveBoard drops the net classes from the .kicad_pro, so --project copies a project file next to
 the output (pass the source board's).
 """
-import sys, os, json, math, argparse, shutil
+import sys, os, json, math, argparse, shutil, collections
 import pcbnew
 
 mm, iu = pcbnew.ToMM, pcbnew.FromMM
@@ -279,8 +279,8 @@ def fit(a):
     for z in spec.get("zones", []):     # a pour the board already has (its GND fill) gives way; it is not cell copper
         if z["layer"] in ("F.Cu", "B.Cu") and (z["net"], z["layer"]) not in have:
             cu.append((z["layer"], z["net"], Polygon(z["pts"]).buffer(0)))
-    for t in spec.get("tracks", []):
-        if t["layer"] in ("F.Cu", "B.Cu"): cu.append((t["layer"], t["net"], LineString(t["pts"]).buffer(t["w"] / 2)))
+    for t in spec.get("tracks", []):    # every layer: a buried sense route (VOS on In3) crosses the board's inner lanes too
+        cu.append((t["layer"], t["net"], LineString(t["pts"]).buffer(t["w"] / 2)))
     vias = [(v["net"], Point(v["at"]).buffer(v.get("d", 0.6) / 2)) for v in spec.get("vias", [])]
 
     # obstacles on the target, without the cell's own parts and private copper
@@ -293,14 +293,14 @@ def fit(a):
         for p in f.Pads():
             if p.GetAttribute() in (pcbnew.PAD_ATTRIB_PTH, pcbnew.PAD_ATTRIB_NPTH):
                 holes.append((r, Point(P(p.GetPosition())).buffer(max(mm(p.GetSize().x), mm(p.GetSize().y)) / 2)))
-    trk = {"F.Cu": [], "B.Cu": []}; inner = []; ovias = []
+    trk = {b.GetLayerName(l): [] for l in b.GetEnabledLayers().CuStack()}; ovias = []
     for t in b.GetTracks():
         if t.GetNetname() in private: continue
         if t.GetClass() == "PCB_VIA":
             ovias.append((t.GetNetname(), Point(P(t.GetPosition())).buffer(mm(t.GetWidth(pcbnew.F_Cu)) / 2)))
         else:
-            g = LineString([P(t.GetStart()), P(t.GetEnd())]).buffer(mm(t.GetWidth()) / 2); ln = b.GetLayerName(t.GetLayer())
-            (trk[ln] if ln in trk else inner).append((t.GetNetname(), g))
+            g = LineString([P(t.GetStart()), P(t.GetEnd())]).buffer(mm(t.GetWidth()) / 2)
+            trk.setdefault(b.GetLayerName(t.GetLayer()), []).append((t.GetNetname(), g))
     keep_out = [sps(z.Outline()) for z in b.Zones() if z.GetIsRuleArea()]
     keep_out = [k for k in keep_out if k is not None]
     edge = None
@@ -309,7 +309,7 @@ def fit(a):
     except Exception:
         pass
     T = lambda items: (STRtree([g for _, g in items]) if items else None, items)
-    TO = {k: T(v) for k, v in obs.items()}; TH = T(holes); TT = {k: T(v) for k, v in trk.items()}; TI = T(inner); TV = T(ovias)
+    TO = {k: T(v) for k, v in obs.items()}; TH = T(holes); TT = {k: T(v) for k, v in trk.items()}; TV = T(ovias)
 
     def hits(tree, g):
         t, its = tree
@@ -337,17 +337,17 @@ def fit(a):
                         parts.add(o + "(hole)")
                     for k in keep_out:
                         if k.intersects(G): bad.append(f"{r} in a keep-out")
-                vh, th = set(), 0
+                vh, th = set(), collections.Counter()
                 for (ln, net, g) in cu:
                     G = affine_transform(g, M)
-                    th += sum(1 for (on, og) in hits(TT[ln], G) if on != net)
+                    th[ln] += sum(1 for (on, og) in hits(TT[ln], G) if on != net)
                     vh |= {id(og) for (on, og) in hits(TV, G) if on != net}
                 for (net, g) in vias:
                     G = affine_transform(g, M)
-                    th += sum(1 for (on, og) in hits(TI, G) if on != net)
-                    th += sum(1 for ln in TT for (on, og) in hits(TT[ln], G) if on != net)
+                    for ln in TT: th[ln] += sum(1 for (on, og) in hits(TT[ln], G) if on != net)
                     vh |= {id(og) for (on, og) in hits(TV, G) if on != net}
-                res.append(dict(at=(round(X, 2), round(Y, 2)), rot=R, parts=sorted(parts), area=round(area, 2), vias=len(vh), tracks=th,
+                th = {k: v for k, v in th.items() if v}
+                res.append(dict(at=(round(X, 2), round(Y, 2)), rot=R, parts=sorted(parts), area=round(area, 2), vias=len(vh), tracks=sum(th.values()), by_layer=th,
                                 bad=bad, dist=round(math.dist((X, Y), pref), 2)))
                 n += 1
             Y += a.step
@@ -357,7 +357,8 @@ def fit(a):
     print(f"{n} poses tried, {len(ok)} on the board and clear of keep-outs; best {min(a.top, len(ok))}:")
     for r in ok[:a.top]:
         print(f"  at {r['at']} rot {r['rot']:>5}: {len(r['parts'])} parts in the way {r['parts']} ({r['area']} mm²), "
-              f"{r['vias']} vias and {r['tracks']} tracks under cell copper, {r['dist']} mm from the preferred spot")
+              f"{r['vias']} vias and {r['tracks']} tracks under cell copper ({', '.join(f'{k} {v}' for k, v in r['by_layer'].items()) or 'none'}), "
+              f"{r['dist']} mm from the preferred spot")
     if a.json: json.dump(ok[:200], open(a.json, "w"), indent=1)
 
 

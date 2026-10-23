@@ -97,6 +97,20 @@ you are willing to move.
    L-21) and maybe a longer feed. That is usually cheaper than a degraded loop.
 7. **Ask for a part change** if nothing above fits.
 
+**After `cell.py place`, every time.** A cell carries copper below the component
+layer: a buried sense route (VOS or FB on In2/In3), its vias, and the rail entry
+and exit vias. `fit` counts the board tracks those cross, per layer. Placing the
+cell does not move them. Before the cell counts as placed:
+
+- rip or re-route every other-net track the cell's inner routes cross (run DRC
+  on the placed copy and read the `clearance` and `shorting_items` entries on
+  inner layers);
+- move every other-net via that sits on the cell's copper;
+- re-run `check_regulator.py` on the placed copy.
+
+A buried sense route that crosses an inner lane is still a short, even when the
+component layer is clean.
+
 ## Several regulators at once
 
 Pack them jointly, in this order:
