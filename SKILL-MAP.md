@@ -280,6 +280,22 @@ consequence, state the assumption). Both reviews write to it and board-doc reads
   being regenerated past `routed`. The Mermaid seed must be edited, never shipped raw.
   It never invents a value.
 
+### jlc-pcb — what JLCPCB builds and assembles
+
+- **Purpose:** one list of every limit JLCPCB publishes, so a rule, a design or a review
+  checks a number against the fab instead of memory.
+- **Files:** `references/capabilities.md`: rigid (material, size, thickness, copper,
+  drills, vias and the via price line, trace and space by copper weight, rings, hole
+  spacing, mask, silk, outline, V-cut, panels, castellation, plated edges, backdrill,
+  impedance), standard 4- and 6-layer stackup names, HDI, flex, assembly (Economic and
+  Standard) and the assembly fee table, each section sourced and dated (2026-10-23).
+- **How it works:** look up the row and quote it with its date; re-read the page when a
+  design sits close to a limit, and update the row. Fab limits only: the house values
+  chosen inside them stay in `ee-layout-rules`.
+- **Bounds:** never quotes a JLC number from memory. A row the list lacks is fetched
+  from the source page and added, not guessed. Per-layer stackup thicknesses are read
+  from JLC's page, not copied.
+
 ---
 
 ## 3. Bounds and simplicity

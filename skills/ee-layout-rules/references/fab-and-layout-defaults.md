@@ -16,11 +16,14 @@ these pages.
   via iNEMI). IPC-2226A is the current revision, and the definitions quoted
   here carried over.
 
-**Where each JLC fact lives.** This file holds what the fabs publish. The
-rest of the house's JLC knowledge is kept elsewhere:
+**Where each JLC fact lives.** The full list of what JLCPCB publishes (rigid, HDI,
+flex, stackups, assembly, fees) is the `jlc-pcb` skill,
+`../../jlc-pcb/references/capabilities.md`; this file keeps the JLC/PCBWay comparison
+and the HDI and via-current reasoning. The rest of the house's JLC knowledge:
 
 | What | Where |
 |---|---|
+| Every JLCPCB limit and fee, one list, dated | `../../jlc-pcb/references/capabilities.md` |
 | Which via to use, and what the drill costs | `../rules/layout.md` L-32; `../rules/drc.json` `vias` (order of preference, first is the default) |
 | Board Setup floors and why each sits where it does at JLC | `../rules/drc.json` `_why` per field |
 | How much current a via carries at JLC plating | §3 below; `../rules/drc.json` `pin_vias.via_amps` |
