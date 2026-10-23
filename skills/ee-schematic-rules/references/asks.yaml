@@ -1,0 +1,75 @@
+# Project-start questions. `schematic-capture` asks these, writes each answer to the
+# project_field path in project.yaml, and every downstream skill reads it there.
+#
+# These are the parts of the house standard that genuinely vary by board. Making
+# them explicit questions is what stops "nobody decided" from looking identical
+# to "we decided this."
+#
+# If a question goes unanswered: take the default, write it to project.yaml with
+# source: default, and append an entry to open_items.yaml.
+
+questions:
+
+  - id: allow_0201
+    question: "Are 0201 passives acceptable on this board?"
+    project_field: passives.allow_0201
+    default: false
+    read_by: [schematic-capture, schematic-review, pcb-placement, layout-review]
+    options:
+      - label: "No — 0402 minimum"
+        value: false
+        note: "Easier rework, more board area, lower assembly risk."
+      - label: "Yes — 0201 where density requires"
+        value: true
+        note: "Needed on dense small boards. Hard to rework by hand; confirm the assembler supports it."
+
+  - id: signal_tp_form
+    question: "What physical form should signal test points take?"
+    project_field: test_access.signal_tp_form
+    default: pad_1mm
+    read_by: [schematic-capture, schematic-review, pcb-placement, layout-review]
+    note: "Ground test points are always probe loops regardless of this answer."
+    options:
+      - label: "1mm exposed pad"
+        value: pad_1mm
+        note: "Default. Probeable by hand, small footprint."
+      - label: "Via-only"
+        value: via
+        note: "Smallest. Needs a fine tip and a steady hand."
+      - label: "Through-hole loop"
+        value: loop
+        note: "Takes a clip. Largest. Worth it on a rail you will monitor for a long run."
+
+  - id: zero_ohm_scope
+    question: "Where should debug zero-ohm series resistors be placed?"
+    project_field: test_access.zero_ohm_scope
+    default: regulator_outputs
+    read_by: [schematic-capture, schematic-review, layout-review]
+    note: "Whatever the scope, each zero-ohm is sized for the rail current it carries."
+    options:
+      - label: "All regulator outputs"
+        value: regulator_outputs
+        note: "House default. Isolate and current-measure each rail."
+      - label: "Regulator outputs plus per-subsystem feeds"
+        value: regulator_outputs_and_subsystems
+        note: "Finer current measurement. More parts and more area."
+      - label: "Regulator outputs plus enable and reset lines"
+        value: regulator_outputs_and_control
+        note: "Lets you break a sequencing or reset loop during bring-up."
+
+  - id: debug_header
+    question: "What debug header should this board carry?"
+    project_field: test_access.debug_header
+    default: cortex_debug_10
+    read_by: [schematic-capture, schematic-review, pcb-placement, layout-review]
+    note: "A debug header is mandatory. Only the style is a choice. Tag-Connect is not used."
+    options:
+      - label: "2x5 1.27mm Cortex Debug"
+        value: cortex_debug_10
+        note: "Standard SWD/JTAG, works with most probes directly."
+      - label: "Cortex Debug plus a separate UART header"
+        value: cortex_debug_10_plus_uart
+        note: "Adds a console. Two connectors."
+      - label: "Compact 4-5 pin 1.27mm SWD"
+        value: swd_compact
+        note: "For small boards. Needs an adapter cable."

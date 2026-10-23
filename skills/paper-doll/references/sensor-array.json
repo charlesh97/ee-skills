@@ -1,0 +1,8 @@
+{"pins": 8, "pitch_mm": 0.5,
+ "ends": {
+  "A": {"name": "main J3", "m": [0, 0, 1], "d": [-1, 0, 0], "contacts": "both",
+        "nets": {"1": "3V3_LED", "2": "3V3_LED", "3": "GND", "4": "1V8", "5": "GND", "6": "SCL", "7": "GND", "8": "SDA"}},
+  "B": {"name": "sensor J1", "m": [0, 0, 1], "d": [1, 0, 0], "contacts": "both",
+        "nets": {"1": "SDA", "2": "GND", "3": "SCL", "4": "GND", "5": "1V8", "6": "GND", "7": "3V3_LED", "8": "3V3_LED"}}},
+ "cable": {"twist": false, "exposed_A": [0, 0, 1], "exposed_B": [0, 0, 1], "shift_possible": false},
+ "ground": ["GND"], "power": ["3V3_LED", "1V8"]}

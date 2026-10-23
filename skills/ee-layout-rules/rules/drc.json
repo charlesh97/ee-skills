@@ -1,0 +1,255 @@
+{
+  "_about": "House DRC rules (draft): every number KiCad enforces, and the only place those numbers live. Edit a value here, never in one board's .kicad_pro; scripts/board_rules.py applies it (apply), reads it back (check) and rebuilds the templates (template). floors go to Board Setup -> Constraints, netclasses to Net Classes, track_widths and vias to the predefined lists. Anything tighter or looser in one place is a scoped .kicad_dru rule (layout rule L-04). Fab sources: references/fab-and-layout-defaults.md. mm throughout. Keys starting with _ are notes.",
+  "profiles": {
+    "rigid": {
+      "_about": "FR-4 rigid, 1 oz outer. Floors sit inside JLCPCB's and PCBWay's standard tier; the predefined lists are what the router and the human pick from.",
+      "board": {
+        "thickness": 1.6
+      },
+      "floors": {
+        "min_clearance": 0.1,
+        "min_track_width": 0.1,
+        "min_connection": 0.0,
+        "min_via_diameter": 0.3,
+        "min_through_hole_diameter": 0.15,
+        "min_via_annular_width": 0.075,
+        "min_hole_to_hole": 0.25,
+        "min_hole_clearance": 0.2,
+        "min_copper_edge_clearance": 0.25,
+        "min_text_height": 0.8,
+        "min_text_thickness": 0.15,
+        "min_microvia_diameter": 0.2,
+        "min_microvia_drill": 0.1,
+        "_why": {
+          "min_clearance": "JLC 2L minimum and PCBWay standard. A floor, not a target: signals use the Default class",
+          "min_track_width": "same as min_clearance: neck to 0.1 only in a fine-pitch escape",
+          "min_connection": "no minimum on zone connections",
+          "min_via_diameter": "the smallest house via, 0.30/0.15, kept so the fine-pitch tier (L-32) passes where a scoped use needs it. A floor, not the default: the Default class via is 0.6/0.3",
+          "min_through_hole_diameter": "drill of the smallest house via (0.15, fine-pitch escape or via-in-pad only, L-32). JLC adds cost below a 0.3 drill; 0.1 needs a board under 1 mm thick at JLC, so it is never on a 1.6 mm board",
+          "min_via_annular_width": "(0.30-0.15)/2 of the smallest house via; JLC's preferred pad >= drill + 0.15",
+          "min_hole_to_hole": "JLC 0.2, PCBWay 0.28; aim 0.30 where there is room",
+          "min_hole_clearance": "JLC 0.2 hole to copper",
+          "min_copper_edge_clearance": "JLC >= 0.2, PCBWay 0.25 normal; aim 0.30, and >= 0.4 at a V-cut",
+          "min_text_height": "PCBWay 0.8, JLC 1.0; aim 1.0",
+          "min_text_thickness": "both houses 0.15",
+          "min_microvia_diameter": "HDI only (L-30)",
+          "min_microvia_drill": "HDI only (L-30)"
+        }
+      },
+      "track_widths": [
+        0.1,
+        0.15,
+        0.2,
+        0.25,
+        0.3,
+        0.4,
+        0.5,
+        0.8,
+        1.0
+      ],
+      "_vias_about": "L-32 (draft; human review of the four encoder test boards, 2026-10-04): the list is in order of preference, and the first entry is the default. JLC pricing as the reviewer gave it: a 0.3 mm drill costs nothing extra, so it is the default on every net of every board and the only via on a test board; a 0.2 drill is allowed where geometry forces it but adds cost; a 0.15 drill costs more again and is for genuine fine-pitch escape or via-in-pad only; a 0.1 drill needs a board under 1 mm thick at JLC and is not in this profile. Anything below the first entry is named in the routing spec with the geometry that forced it. The floors still admit the 0.3/0.15 via so a scoped use passes DRC; KiCad sorts its predefined list by size, so the order here is the house's, not the GUI's.",
+      "vias": [
+        {
+          "diameter": 0.6,
+          "drill": 0.3,
+          "_why": "house default and the Default and Power class via: 0.3 mm drill is JLC's no-added-cost via. Use it everywhere, and only it on test boards"
+        },
+        {
+          "diameter": 0.45,
+          "drill": 0.2,
+          "_why": "step-down where geometry forces it (0.8 mm pitch fanout, a channel a 0.6 pad blocks); adds cost at JLC per the 2026-10-04 review. Say where in the routing spec"
+        },
+        {
+          "diameter": 0.3,
+          "drill": 0.15,
+          "_why": "fine-pitch escape (0.65 mm pitch and below) or via-in-pad only, with the reason recorded in the routing spec; JLC small-via surcharge"
+        }
+      ],
+      "netclasses": {
+        "Default": {
+          "track_width": 0.2,
+          "clearance": 0.15,
+          "via_diameter": 0.6,
+          "via_drill": 0.3,
+          "_why": "route signals at 8 mil, not the 4-6 mil minimum. Via 0.6/0.3, the no-added-cost via (L-32); a smaller via is a scoped exception named in the routing spec"
+        },
+        "Power": {
+          "track_width": 0.4,
+          "clearance": 0.2,
+          "via_diameter": 0.6,
+          "via_drill": 0.3,
+          "_why": "starting class for rails; size each rail by its current and add a class per width when one rail needs more. Via 0.6/0.3, the no-added-cost via (L-32)"
+        }
+      },
+      "edge_ring": {
+        "margin_mm": 1.0,
+        "stitch_pitch_mm": 5.0,
+        "coverage": 0.9,
+        "margin_severity": "warn",
+        "_why": "L-38 (draft): keep signal and power copper at least margin_mm from the board edge on every layer, so a GND ring can run around the outline on the outer layers, stitched to the GND plane every stitch_pitch_mm. check_copper.py grades it. margin_severity: copper in the band is a warning by default, because whether the band must be clear depends on the board; check_copper.py --edge-margin-fail makes it a failure where the routing spec says the band is strict. Ring coverage (edge-ring) is always a failure."
+      },
+      "stitch": {
+        "area_pitch_mm": 2.0,
+        "area_pitch_max_mm": 2.5,
+        "stagger": true,
+        "via": [
+          0.6,
+          0.3
+        ],
+        "net": "GND",
+        "group": "GND stitching",
+        "min_island_mm2": 2.0,
+        "min_island_vias": 2,
+        "two_via_mm2": 10.0,
+        "min_fill_ratio": 0.3,
+        "_why": "L-43 (draft): stitch every pour of net to the plane on every layer, as the last pass after routing. scripts/stitch.py lays through vias of size via on a staggered area_pitch_mm grid wherever the net's fills overlap, all in one KiCad group named group, so the whole set is deleted in one action before a re-route and regenerated after. via is 0.6/0.3, the no-added-cost via (L-32). area_pitch_mm is 2.0 (human review of the four encoder test boards, 2026-10-04): the 1.0 mm stagger copied from the hand-stitched 6x8 array board littered those boards with vias for no benefit. Up to area_pitch_max_mm (2.5) on a small, slow board; tighter than 2.0 only for a high-speed or RF return path, with the pitch and the reason stated in the routing spec (stitch.py add --pitch). check_copper.py grades the result: a fill island of at least min_island_mm2 needs one via of the net, and min_island_vias from two_via_mm2 up (a through-hole pad counts); it fails only at the final stage, since stitching is the last pass. A sliver below min_island_mm2 is left to KiCad's minimum island area to remove, and a pour whose fill is under min_fill_ratio of its outline is reported."
+      },
+      "pin_vias": {
+        "max_track_mm": 1.5,
+        "power_class_prefixes": [
+          "Power",
+          "PWR"
+        ],
+        "ground_nets": [
+          "GND"
+        ],
+        "_why": "L-39 (draft): every pad on a power net reaches its own via within max_track_mm of track (via-in-pad counts; a through-hole pad is its own via); every ground pad too, where the pitch allows. check_copper.py grades it."
+      }
+    },
+    "flex": {
+      "_about": "Polyimide flex at JLCPCB FPC. Coarser vias than rigid: regular 0.55/0.3, extreme 4-layer 0.35/0.15 (extra cost). No impedance control. JLC also offers 2-layer extreme 0.3/0.1 (extra cost); that is below this profile's via floor, so use it only through a scoped .kicad_dru rule.",
+      "board": {
+        "thickness": null
+      },
+      "floors": {
+        "min_clearance": 0.1,
+        "min_track_width": 0.1,
+        "min_connection": 0.0,
+        "min_via_diameter": 0.35,
+        "min_through_hole_diameter": 0.15,
+        "min_via_annular_width": 0.1,
+        "min_hole_to_hole": 0.25,
+        "min_hole_clearance": 0.2,
+        "min_copper_edge_clearance": 0.3,
+        "min_text_height": 1.0,
+        "min_text_thickness": 0.15,
+        "min_microvia_diameter": 0.2,
+        "min_microvia_drill": 0.1,
+        "_why": {
+          "min_clearance": "JLC 2L minimum and PCBWay standard. A floor, not a target: signals use the Default class",
+          "min_track_width": "same as min_clearance: neck to 0.1 only in a fine-pitch escape",
+          "min_connection": "no minimum on zone connections",
+          "min_via_diameter": "JLC FPC 4-layer extreme via 0.15/0.35 (extra cost); regular is 0.30/0.55",
+          "min_through_hole_diameter": "drill of the smallest house via (the 0.35/0.15 extreme FPC via, fine-pitch only); JLC adds cost below a 0.3 drill",
+          "min_via_annular_width": "(0.35-0.15)/2 of the extreme FPC via",
+          "min_hole_to_hole": "JLC 0.2, PCBWay 0.28; aim 0.30 where there is room",
+          "min_hole_clearance": "JLC 0.2 hole to copper",
+          "min_copper_edge_clearance": "laser-cut outline; JLC FPC >= 0.3",
+          "min_text_height": "JLC FPC silk 1.0",
+          "min_text_thickness": "both houses 0.15",
+          "min_microvia_diameter": "HDI only (L-30)",
+          "min_microvia_drill": "HDI only (L-30)"
+        }
+      },
+      "track_widths": [
+        0.1,
+        0.15,
+        0.2,
+        0.25,
+        0.3,
+        0.4,
+        0.5,
+        0.8
+      ],
+      "vias": [
+        {
+          "diameter": 0.55,
+          "drill": 0.3,
+          "_why": "JLC FPC regular"
+        },
+        {
+          "diameter": 0.35,
+          "drill": 0.15,
+          "_why": "JLC FPC 4-layer extreme, extra cost; fine-pitch only"
+        }
+      ],
+      "netclasses": {
+        "Default": {
+          "track_width": 0.15,
+          "clearance": 0.15,
+          "via_diameter": 0.55,
+          "via_drill": 0.3,
+          "_why": "flex signal default; 0.15 keeps margin on 4/4 mil and in bend areas"
+        },
+        "Power": {
+          "track_width": 0.3,
+          "clearance": 0.2,
+          "via_diameter": 0.55,
+          "via_drill": 0.3,
+          "_why": "starting class for rails; size by current"
+        }
+      },
+      "edge_ring": {
+        "margin_mm": 0.5,
+        "stitch_pitch_mm": 5.0,
+        "coverage": 0.9,
+        "margin_severity": "warn",
+        "_why": "L-38 (draft) on flex: a narrower band; the ring runs on whichever outer layer carries the flex GND. margin_severity as on rigid: a warning unless the routing spec makes the band strict (--edge-margin-fail)."
+      },
+      "stitch": {
+        "area_pitch_mm": 2.0,
+        "area_pitch_max_mm": 2.5,
+        "stagger": true,
+        "via": [
+          0.55,
+          0.3
+        ],
+        "net": "GND",
+        "group": "GND stitching",
+        "min_island_mm2": 2.0,
+        "min_island_vias": 2,
+        "two_via_mm2": 10.0,
+        "min_fill_ratio": 0.3,
+        "_why": "L-43 (draft) on flex. via is JLC FPC's regular 0.55/0.3, not the 0.35/0.15 extreme via: stitching gains nothing from the extra-cost fine via. area_pitch_mm 2.0, the same as rigid since the 2026-10-04 review; on flex it is also a ceiling on density, because every plated hole stiffens the polyimide and is a crack start in a bend, and flex GND is often a hatched pour whose openings a fine grid would mostly miss. Keep stitching out of bend areas with a via keepout rule area; stitch.py honours it. Island and fill thresholds as rigid."
+      },
+      "pin_vias": {
+        "max_track_mm": 1.5,
+        "power_class_prefixes": [
+          "Power",
+          "PWR"
+        ],
+        "ground_nets": [
+          "GND"
+        ],
+        "_why": "L-39 (draft): every pad on a power net reaches its own via within max_track_mm of track (via-in-pad counts; a through-hole pad is its own via); every ground pad too, where the pitch allows. check_copper.py grades it."
+      }
+    }
+  },
+  "templates": {
+    "rigid_2L": {
+      "profile": "rigid",
+      "copper_layers": 2,
+      "title": "Rigid 2-layer, 1.6 mm FR-4",
+      "thickness": 1.6
+    },
+    "rigid_4L": {
+      "profile": "rigid",
+      "copper_layers": 4,
+      "title": "Rigid 4-layer, 1.6 mm FR-4",
+      "thickness": 1.6
+    },
+    "flex_2L": {
+      "profile": "flex",
+      "copper_layers": 2,
+      "title": "Flex 2-layer, polyimide (JLC FPC)",
+      "thickness": 0.2
+    },
+    "flex_4L": {
+      "profile": "flex",
+      "copper_layers": 4,
+      "title": "Flex 4-layer, polyimide (JLC FPC)",
+      "thickness": 0.35
+    },
+    "_about": "thickness is the finished board thickness written into the stackup; for flex set it to the real FPC stackup before ordering (JLC FPC finished 0.07-0.45 mm)."
+  }
+}

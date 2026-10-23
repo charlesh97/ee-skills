@@ -1,0 +1,5 @@
+(sym_lib_table
+	(version 7)
+	(lib (name "house") (type "KiCad") (uri "${EE_LIB}/house.kicad_sym") (options "") (descr "house symbol library"))
+	(lib (name "house_vendor") (type "KiCad") (uri "${EE_LIB}/house_vendor.kicad_sym") (options "") (descr "vendored third-party symbols"))
+)

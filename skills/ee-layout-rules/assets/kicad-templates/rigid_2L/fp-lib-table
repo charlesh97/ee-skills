@@ -1,0 +1,5 @@
+(fp_lib_table
+	(version 7)
+	(lib (name "house") (type "KiCad") (uri "${EE_LIB}/house.pretty") (options "") (descr "house footprint library"))
+	(lib (name "house_vendor") (type "KiCad") (uri "${EE_LIB}/house_vendor.pretty") (options "") (descr "vendored third-party footprints"))
+)
