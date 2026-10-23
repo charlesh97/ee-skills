@@ -53,6 +53,7 @@ Tools: KiCad 10's Python (`$KPY`, with shapely and Pillow; the KiCadRoutingTools
 | `scripts/check_regulator.py BOARD SPEC.json [--json] [--render DIR]` | The cell check: every limit in `references/cell-check.md`, per regulator, PASS/WARN/FAIL with the number; exit 1 on any FAIL. Read only. |
 | `scripts/cell.py extract BOARD --refs IC,L,C... --origin X,Y` | Turns a laid-out cell (a demo board, or a good cell on another board) into a cell spec in the IC's frame. |
 | `scripts/cell.py build CELL.json --source BOARD -o DEMO` | Builds a demo board from a spec, with the source board's stackup, net classes and footprints. |
+| `scripts/cell.py fit CELL.json --target BOARD --region X0,Y0,X1,Y1 [--parts CORE] [--movable REFS]` | Searches positions and rotations for the cell on a board and ranks them by what is in the way (parts, holes, keep-outs, the edge, other-net vias and tracks under its copper). Read only. |
 | `scripts/cell.py place CELL.json --target BOARD --at X,Y --rot R -o COPY` | Places a cell onto a copy of a board: moves its parts, replaces the copper on its private nets, adds its pours without stacking a zone on one the board already has. |
 
 ## Method
@@ -123,10 +124,17 @@ the datasheet figure.
 
 Show the human the demo, the check table and a side-by-side with the current
 layout if there is one. Once they accept the cell, `cell.py extract` stores it as
-`<cell>.json`, and `cell.py place` writes a copy of the board with the cell at
-its spot. Then run the check and DRC on that copy. Expect collisions the first
-time: they are the placement work around the cell, and so is the rail-shape
-change that makes the rails meet the cell's edges.
+`<cell>.json`. Then fit it to the board (`references/fitting.md`):
+
+- `cell.py fit` searches poses for the cell's rigid core;
+- if nothing is clear, pivot in the order that page gives: variants, then moving
+  other parts, then tier 1 trades, each re-checked and reported as a delta;
+- with several regulators, pack them together, most constrained first, along
+  the power tree.
+
+`cell.py place` writes a copy of the board with the cell at the chosen pose. Run
+the check and DRC on that copy, then re-seat the periphery and draw the rails to
+the cell's edges.
 
 On the real board:
 
@@ -150,6 +158,9 @@ check is a finding even when DRC is clean.
   read in the datasheet, and part-specific traps.
 - `references/cell-check.md` gives every limit, why it is set where it is, and the
   spec fields.
+- `references/fitting.md` covers packing a cell into the space the board has:
+  the core, ring and periphery, what never bends and what bends with a number,
+  the order of pivots, and packing several regulators together.
 - `references/cell-recipe.md` is a worked example: a 1 A synchronous buck in an
   8-pin SOT-583, 12 V to 5 V, on a 6-layer board, with its numbers before and
   after.

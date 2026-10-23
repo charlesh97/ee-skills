@@ -19,6 +19,11 @@ tracks), stored as JSON in the cell's own frame (mm, the IC's centre at 0,0 unle
         cell's copper. Zones of shared nets (GND, the input and output rails) are added only where the
         target has no zone of that net on that layer, so no zone is stacked (L-23). Never writes BOARD.
 
+  $KPY cell.py fit cell.json --target BOARD --region X0,Y0,X1,Y1 [--parts IC,L,CIN,COUT] [--movable REFS] [--prefer X,Y]
+        Read only. Tries every pose on a grid in the region at each rotation and ranks them: board parts whose
+        courtyards the cell's rigid parts hit, holes, keep-outs and the edge, then other-net vias and tracks
+        under the cell's copper. Fit the rigid core first; the periphery is re-seated around it afterwards.
+
 pcbnew's SaveBoard drops the net classes from the .kicad_pro, so --project copies a project file next to
 the output (pass the source board's).
 """
@@ -231,6 +236,131 @@ def place(a):
     save(b, a.o, a.project)
 
 
+# ---------------------------------------------------------------- fit
+def fit(a):
+    """Search poses for a cell on a board: count what each pose collides with, best first. Read only."""
+    from shapely.geometry import Polygon, Point, LineString, box as sbox
+    from shapely.ops import unary_union
+    from shapely.affinity import affine_transform
+    from shapely.strtree import STRtree
+    spec = json.load(open(a.cell)); b = pcbnew.LoadBoard(a.target)
+    fps = {f.GetReference(): f for f in b.GetFootprints()}
+    refs = list(spec["footprints"]); rigid = a.parts.split(",") if a.parts else refs
+    free_ok = set(a.movable.split(",")) if a.movable else set()
+    cellpads = {(r, p.GetNumber()) for r in refs for p in fps[r].Pads()}
+    nets = {p.GetNetname() for r in refs for p in fps[r].Pads() if p.GetNetname()}
+    private = {n for n in nets if all((p.GetParentFootprint().GetReference(), p.GetNumber()) in cellpads
+                                      for p in b.GetPads() if p.GetNetname() == n)}
+
+    def sps(ps):
+        out = []
+        for i in range(ps.OutlineCount()):
+            o = ps.Outline(i); pts = [P(o.CPoint(k)) for k in range(o.PointCount())]
+            if len(pts) > 2: out.append(Polygon(pts).buffer(0))
+        return unary_union(out) if out else None
+
+    def court(f):
+        g = sps(f.GetCourtyard(pcbnew.B_CrtYd if f.IsFlipped() else pcbnew.F_CrtYd))
+        if g is None:
+            bb = f.GetBoundingBox(False); g = sbox(mm(bb.GetLeft()), mm(bb.GetTop()), mm(bb.GetRight()), mm(bb.GetBottom()))
+        return g
+
+    # the cell in its own frame
+    def to_cell(g, f, e):
+        pos = P(f.GetPosition()); d = math.radians((e["rot"] - f.GetOrientationDegrees()) % 360)
+        c, s_ = math.cos(d), math.sin(d)
+        # rotate about the footprint origin by d (KiCad sense), then put the origin at the spec pose
+        g = affine_transform(g, [c, s_, -s_, c, pos[0] - c * pos[0] - s_ * pos[1], pos[1] + s_ * pos[0] - c * pos[1]])
+        return affine_transform(g, [1, 0, 0, 1, e["at"][0] - pos[0], e["at"][1] - pos[1]])
+    cyd = {r: (to_cell(court(fps[r]), fps[r], spec["footprints"][r]), spec["footprints"][r].get("side", "F")) for r in rigid}
+    have = {(z.GetNetname(), b.GetLayerName(l)) for z in b.Zones() if not z.GetIsRuleArea() and z.GetNetname() not in private
+            for l in z.GetLayerSet().CuStack()}
+    cu = []
+    for z in spec.get("zones", []):     # a pour the board already has (its GND fill) gives way; it is not cell copper
+        if z["layer"] in ("F.Cu", "B.Cu") and (z["net"], z["layer"]) not in have:
+            cu.append((z["layer"], z["net"], Polygon(z["pts"]).buffer(0)))
+    for t in spec.get("tracks", []):
+        if t["layer"] in ("F.Cu", "B.Cu"): cu.append((t["layer"], t["net"], LineString(t["pts"]).buffer(t["w"] / 2)))
+    vias = [(v["net"], Point(v["at"]).buffer(v.get("d", 0.6) / 2)) for v in spec.get("vias", [])]
+
+    # obstacles on the target, without the cell's own parts and private copper
+    side_of = lambda f: "B" if f.IsFlipped() else "F"
+    obs = {"F": [], "B": []}; holes = []
+    for f in b.GetFootprints():
+        r = f.GetReference()
+        if r in refs: continue
+        obs[side_of(f)].append((r, court(f)))
+        for p in f.Pads():
+            if p.GetAttribute() in (pcbnew.PAD_ATTRIB_PTH, pcbnew.PAD_ATTRIB_NPTH):
+                holes.append((r, Point(P(p.GetPosition())).buffer(max(mm(p.GetSize().x), mm(p.GetSize().y)) / 2)))
+    trk = {"F.Cu": [], "B.Cu": []}; inner = []; ovias = []
+    for t in b.GetTracks():
+        if t.GetNetname() in private: continue
+        if t.GetClass() == "PCB_VIA":
+            ovias.append((t.GetNetname(), Point(P(t.GetPosition())).buffer(mm(t.GetWidth(pcbnew.F_Cu)) / 2)))
+        else:
+            g = LineString([P(t.GetStart()), P(t.GetEnd())]).buffer(mm(t.GetWidth()) / 2); ln = b.GetLayerName(t.GetLayer())
+            (trk[ln] if ln in trk else inner).append((t.GetNetname(), g))
+    keep_out = [sps(z.Outline()) for z in b.Zones() if z.GetIsRuleArea()]
+    keep_out = [k for k in keep_out if k is not None]
+    edge = None
+    try:
+        ps = pcbnew.SHAPE_POLY_SET(); b.GetBoardPolygonOutlines(ps); edge = sps(ps)
+    except Exception:
+        pass
+    T = lambda items: (STRtree([g for _, g in items]) if items else None, items)
+    TO = {k: T(v) for k, v in obs.items()}; TH = T(holes); TT = {k: T(v) for k, v in trk.items()}; TI = T(inner); TV = T(ovias)
+
+    def hits(tree, g):
+        t, its = tree
+        return [] if t is None else [its[i] for i in t.query(g) if its[i][1].intersects(g)]
+
+    x0, y0, x1, y1 = (float(v) for v in a.region.split(","))
+    pref = tuple(float(v) for v in a.prefer.split(",")) if a.prefer else ((x0 + x1) / 2, (y0 + y1) / 2)
+    rots = [float(r) for r in a.rots.split(",")]
+    res = []
+    n = 0
+    X = x0
+    while X <= x1 + 1e-9:
+        Y = y0
+        while Y <= y1 + 1e-9:
+            for R in rots:
+                t_ = math.radians(R); c, s_ = math.cos(t_), math.sin(t_); M = [c, s_, -s_, c, X, Y]
+                parts, area, bad = set(), 0.0, []
+                for r, (g, sd) in cyd.items():
+                    G = affine_transform(g, M)
+                    if edge is not None and not edge.buffer(-0.3).contains(G): bad.append(f"{r} off the board")
+                    for (o, og) in hits(TO[sd], G):
+                        if o in free_ok: continue
+                        parts.add(o); area += og.intersection(G).area
+                    for (o, og) in hits(TH, G):
+                        parts.add(o + "(hole)")
+                    for k in keep_out:
+                        if k.intersects(G): bad.append(f"{r} in a keep-out")
+                vh, th = set(), 0
+                for (ln, net, g) in cu:
+                    G = affine_transform(g, M)
+                    th += sum(1 for (on, og) in hits(TT[ln], G) if on != net)
+                    vh |= {id(og) for (on, og) in hits(TV, G) if on != net}
+                for (net, g) in vias:
+                    G = affine_transform(g, M)
+                    th += sum(1 for (on, og) in hits(TI, G) if on != net)
+                    th += sum(1 for ln in TT for (on, og) in hits(TT[ln], G) if on != net)
+                    vh |= {id(og) for (on, og) in hits(TV, G) if on != net}
+                res.append(dict(at=(round(X, 2), round(Y, 2)), rot=R, parts=sorted(parts), area=round(area, 2), vias=len(vh), tracks=th,
+                                bad=bad, dist=round(math.dist((X, Y), pref), 2)))
+                n += 1
+            Y += a.step
+        X += a.step
+    ok = [r for r in res if not r["bad"]]
+    ok.sort(key=lambda r: (len(r["parts"]), r["area"], r["vias"] + r["tracks"], r["dist"]))
+    print(f"{n} poses tried, {len(ok)} on the board and clear of keep-outs; best {min(a.top, len(ok))}:")
+    for r in ok[:a.top]:
+        print(f"  at {r['at']} rot {r['rot']:>5}: {len(r['parts'])} parts in the way {r['parts']} ({r['area']} mm²), "
+              f"{r['vias']} vias and {r['tracks']} tracks under cell copper, {r['dist']} mm from the preferred spot")
+    if a.json: json.dump(ok[:200], open(a.json, "w"), indent=1)
+
+
 ap = argparse.ArgumentParser(); sub = ap.add_subparsers(dest="cmd", required=True)
 e = sub.add_parser("extract"); e.add_argument("board"); e.add_argument("--refs", required=True); e.add_argument("--origin", required=True)
 e.add_argument("--rot", type=float, default=0.0); e.add_argument("--margin", type=float, default=0.5); e.add_argument("-o", required=True)
@@ -240,5 +370,10 @@ bd.add_argument("--project")
 pl = sub.add_parser("place"); pl.add_argument("cell"); pl.add_argument("--target", required=True); pl.add_argument("--at", required=True)
 pl.add_argument("--rot", type=float, default=0.0); pl.add_argument("-o", required=True); pl.add_argument("--project")
 pl.add_argument("--allow-locked", action="store_true")
+ft = sub.add_parser("fit"); ft.add_argument("cell"); ft.add_argument("--target", required=True); ft.add_argument("--region", required=True)
+ft.add_argument("--step", type=float, default=0.5); ft.add_argument("--rots", default="0,90,180,270"); ft.add_argument("--prefer")
+ft.add_argument("--parts", help="the cell's rigid parts (default: all); the rest are re-seated after the fit")
+ft.add_argument("--movable", help="board parts you are willing to move; they are not counted in the way")
+ft.add_argument("--top", type=int, default=10); ft.add_argument("--json")
 a = ap.parse_args()
-{"extract": extract, "build": build, "place": place}[a.cmd](a)
+{"extract": extract, "build": build, "place": place, "fit": fit}[a.cmd](a)
