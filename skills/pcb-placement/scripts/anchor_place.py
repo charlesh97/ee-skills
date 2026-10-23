@@ -25,6 +25,10 @@ Run with KiCadRoutingTools' venv python ($KV: pcbnew, numpy, shapely). Board opt
   --hv REGEX              nets that need 0.35 mm instead of 0.25 mm clearance (default none)
   --floorplan JSON        a KRT floorplan intent whose "keepouts" (rect/circle, sides, allow) are honoured
   --via D/DRILL           pin via (default 0.6/0.3; in-pad fallbacks 0.45/0.2 then 0.35/0.15)
+place also takes --keep-good MM (leave parts already that close to their pin), --held JSON (no-part zones:
+{"areas": [{"rect": [x0,y0,x1,y1], "layers": ["F.Cu"] or null, "active": true}]}) and --overrides FILE
+(reviewer lines: "FIX REF" keeps a part; "ANCHOR REF NET REF2.PAD" pulls REF's pin on NET to that pad, or for
+a decap names the IC pin it serves).
 
   $KV anchor_place.py select  BOARD --sheets /sheetA/ /sheetB/ --region X0 Y0 X1 Y1 > movable.txt
   $KV anchor_place.py classify BOARD --movable movable.txt [--csv roles.csv]
@@ -43,7 +47,7 @@ from shapely import affinity
 
 MM = 1e6
 def mm(v): return v / MM
-POWER = set()        # filled by Board() from the pours, the name pattern and --power-nets
+POWER = set()        # filled by Board() from the pours, the net classes, the name pattern and --power-nets
 POWER_NAME = re.compile(r"^(A|D|P)?GND\w*$|^VBUS$|^VIN$|^VCC\w*$|^VDD\w*$|^\+?\d+V\d*$")
 POWER_CLASS = re.compile(r"power|pwr|gnd|supply|rail", re.I)
 POWER_GLOBS = []
@@ -53,6 +57,7 @@ SMALL = re.compile(r"^(R|C|D|L|FB)\d+$")
 SAT_IC = re.compile(r"TPD|ESD|TVS|PESD")
 EPS = 1e-3     # mm: geometry from KiCad polygons lands a hair under a 0.2 mm design value
 W_SIG, W_POWER, W_OWNER, W_OUT, W_LOCAL, W_PRIV = 1.0, 0.6, 1.0, 0.3, 0.1, 3.0
+HELD = None
 FLOORPLAN = None
 
 
@@ -194,7 +199,7 @@ def classify(B):
         own = B.owner(ref) if kinds and all(k in ("plane", "power") for k in kinds) else None
         anchors = []
         for num, n in sig:
-            fx = B.fixed_pads(n, skip=(ref,))
+            fx = [x for x in B.fixed_pads(n, skip=(ref,)) if not x[0].startswith("TP")]   # a test point is no anchor
             near = not B.region or box(*B.region).buffer(3).contains(Point(pxy(fx[0][1]))) if fx else False
             if len(fx) == 1 and near: anchors.append(f"{fx[0][0]}.{fx[0][1].GetNumber()}")
         if own:
@@ -270,6 +275,43 @@ def order(C):
     return sorted(C, key=key)
 
 
+def main_net(c):
+    nets = [n for _, n, k in c["pins"] if k != "nc"]
+    return next((n for _, n, k in c["pins"] if k == "power"), nets[0] if nets else None)
+
+
+def anchor_dist(B, C, r):
+    """how far the part's pin sits from the pin it belongs to, as placed on the board (None if it has none)"""
+    c = C[r]; f = B.fp[r]
+    if c["owner"]:
+        n = main_net(c); g = B.fp[c["owner"]]
+        mp = [pxy(p) for p in f.Pads() if p.GetNetname() == n]
+        return min(math.dist(a, pxy(q)) for a in mp for q in g.Pads() if q.GetNetname() == n)
+    if c["anchors"]:
+        ref, num = c["anchors"][0].split("."); q = next(q for q in B.fp[ref].Pads() if q.GetNumber() == num)
+        return min(math.dist(pxy(p), pxy(q)) for p in f.Pads() if p.GetNetname() == q.GetNetname())
+    return None
+
+
+def assign_owner_pads(B, C, keep=()):
+    """spread decaps over the owner's pins on their rail (smallest value first, a pin each before any pin gets a
+    second): a part kept where it is claims the owner pin nearest it; the rest take the least-claimed pin,
+    nearest to where the part was"""
+    groups = collections.defaultdict(list)
+    for r, c in C.items():
+        if c["owner"] and c["role"] == "decap" and not c.get("owner_fixed"): groups[(c["owner"], main_net(c))].append(r)
+    for (own, n), rs in groups.items():
+        pads = [p for p in B.fp[own].Pads() if p.GetNetname() == n]
+        if len(pads) < 2: continue
+        claims = collections.Counter()
+        def near(r, ps): return min(ps, key=lambda p: math.dist(pxy(p), pxy(B.fp[r])))
+        for r in [r for r in rs if r in keep]:
+            p = near(r, pads); C[r]["owner_pad"] = p.GetNumber(); claims[p.GetNumber()] += 1
+        for r in sorted((r for r in rs if r not in keep), key=lambda r: (C[r]["cap"], r)):
+            low = min(claims[p.GetNumber()] for p in pads)
+            p = near(r, [p for p in pads if claims[p.GetNumber()] == low]); C[r]["owner_pad"] = p.GetNumber(); claims[p.GetNumber()] += 1
+
+
 # ---------------------------------------------------------------- geometry of a part per rotation
 class Shape:
     """pad offsets/polygons and courtyard of a footprint at each quarter turn, relative to its origin."""
@@ -303,6 +345,8 @@ class Legal:
                 self.ko.append((g, k.get("allow", [])))
         except FileNotFoundError:
             pass
+        for h in (json.load(open(HELD))["areas"] if HELD else []):     # routing threads' held areas (side layer or all)
+            if h.get("active") and (h.get("layers") is None or f"{side}.Cu" in h["layers"]): self.ko.append((box(*h["rect"]), []))
         for z in b.Zones():
             if not z.GetIsRuleArea() or not z.IsOnLayer(sl): continue
             if z.GetDoNotAllowFootprints() or "barrier" in (z.GetZoneName() or ""):
@@ -332,6 +376,13 @@ class Legal:
             if reg is None or g.intersects(reg): self.copper.append((g, t.GetNetname(), None))
         # every copper item on any layer, for pin-via room (a via goes through all of them)
         self.allcu = []
+        for f in b.GetFootprints():          # drilled holes, NPTH too: no copper on them, but a via or pad must keep off
+            for p in f.Pads():
+                d = p.GetDrillSize()
+                if d.x > 0:
+                    g = Point(pxy(p)).buffer(mm(max(d.x, d.y)) / 2)
+                    if reg is None or g.intersects(reg):
+                        self.allcu.append((g, "", "hole")); self.copper.append((g, "#hole", None))
         for f in b.GetFootprints():
             if f.GetReference() in B.mov: continue
             for p in f.Pads():
@@ -349,7 +400,8 @@ class Legal:
         self.novia = [polys(z.Outline()) for z in b.Zones() if z.GetIsRuleArea() and z.GetDoNotAllowVias()]
         self.novia = [g for g in self.novia if g is not None]
         self.board_in = polys(outline).buffer(-1.0)
-        self.placed = {}      # ref -> (courtyard, [(padgeom, net)], [(viageom, net, (x, y), padcentre)])
+        self.placed = {}      # ref -> (courtyard, [(padgeom, net)], [(viageom, net, (x, y), padcentre, stub, w)])
+        self.peers = []       # the other side's Legal (set by the caller)
         self._tree()
 
     def _tree(self):
@@ -359,17 +411,25 @@ class Legal:
             + [(g, n, r) for r, v in self.placed.items() for g, n, _, _, _, _ in v[2]] \
             + [(st, n, r) for r, v in self.placed.items() for _, n, _, _, st, _ in v[2]]
         self.cutree = STRtree([g for g, _, _ in self.cu_items])
+        for P in self.peers:          # the other side's seated parts: their vias go through this side too
+            self.cu_items += [(g, n, r) for r, v in P.placed.items() for g, n, *_ in v[2]]
+            self.cutree = STRtree([g for g, _, _ in self.cu_items])
         self.va_items = [(g, n, k, None) for g, n, k in self.allcu] \
+            + [(g, n, "pad", r) for P in self.peers for r, v in P.placed.items() for g, n in v[1] if g is not None] \
+            + [(g, n, "via", r) for P in self.peers for r, v in P.placed.items() for g, n, *_ in v[2]] \
             + [(g, n, "pad", r) for r, v in self.placed.items() for g, n in v[1] if g is not None] \
             + [(g, n, "via", r) for r, v in self.placed.items() for g, n, _, _, _, _ in v[2]]
         self.vatree = STRtree([g for g, _, _, _ in self.va_items])
 
     def put(self, ref, c, pads):
         self.placed[ref] = (c, pads, self.vias_for(ref, pads, partial=True) or []); self._tree()
-    def lift(self, ref): self.placed.pop(ref, None); self._tree()
+        for P in self.peers: P._tree()
+    def lift(self, ref):
+        self.placed.pop(ref, None); self._tree()
+        for P in self.peers: P._tree()
 
     def vias_for(self, ref, pads, partial=False):
-        """one pin via (--via, default 0.6/0.3) per power/ground pad (L-39), beside the pad as pin_vias3 puts it: centre at
+        """one 0.6/0.3 pin via per power/ground pad (L-39), beside the pad as pin_vias3 puts it: centre at
         half-size + 0.5 + k*0.25 mm along 0/45/90 deg, 0.2 mm to other copper on every layer, 0.3 mm to any via,
         0.1 mm to its own pad, ring within 0.5 mm of the pad edge, and a straight stub (min(0.4, narrow side)) that
         clears other-net copper on the part's side. Returns [(geom, net, (x, y), padcentre, stubgeom)], or None."""
@@ -400,7 +460,7 @@ class Legal:
                     for i in self.vatree.query(vg.buffer(0.35)):
                         g, on, kind, r_ = self.va_items[int(i)]
                         if r_ == ref: continue
-                        if kind == "via": need = 0.3
+                        if kind in ("via", "hole"): need = 0.3
                         elif kind == "pad": need = 0.3 if HVP.search(on or "") else 0.2
                         else:
                             if on == n: continue
@@ -484,16 +544,25 @@ class Model:
             opads = {n: [p for p in g.Pads() if p.GetNetname() == n] for n in nets}
             # owner pins on each net, closest pair first (decap across adjacent pins)
             chosen = {}
+            main0 = next((n for _, n, k in c["pins"] if k == "power"), nets[0])
+            if c.get("owner_pad"):        # decaps spread over the owner's pins on that rail (assign_owner_pads / ANCHOR)
+                named = [p for p in g.Pads() if p.GetNumber() == c["owner_pad"]]
+                if named and opads[main0]:
+                    chosen[main0] = min(opads[main0], key=lambda p: math.dist(pxy(p), pxy(named[0])))
             for n in nets:
-                others = [pxy(p) for m in nets if m != n for p in opads[m]]
+                if n in chosen: continue
+                if not opads[n]:      # the named owner has no pin on this net (a GND via will do): pull outward only
+                    continue
+                others = [pxy(chosen[main0])] if main0 in chosen else [pxy(p) for m in nets if m != n for p in opads[m]]
                 chosen[n] = min(opads[n], key=lambda p: min((math.dist(pxy(p), o) for o in others), default=0))
             # the main pin is the non-plane one (the decap's rail, the ESD diode's line); a plane pin is pulled to the
             # owner's pin on that net only when that pin is beside the main one (decap across adjacent pins), else it
             # just wants to sit outward, where its via goes (an ESD diode does not run to a connector's far GND pin)
             main = next((n for _, n, k in c["pins"] if k == "power"), nets[0])
             gc = pxy(g)
+            if main not in chosen: return out
             for num, n, k in c["pins"]:
-                if k == "nc": continue
+                if k == "nc" or n not in chosen: continue
                 q = pxy(chosen[n]); qm = pxy(chosen[main])
                 if k == "plane" and n != main and math.dist(q, qm) > 3.0:
                     ux, uy = qm[0] - gc[0], qm[1] - gc[1]; L = math.hypot(ux, uy) or 1
@@ -503,6 +572,10 @@ class Model:
             return out
         anchor_xy = None; anchor_c = None
         for num, n, k in c["pins"]:
+            if k in ("signal", "power") and n.split("/")[-1] in {x.split("/")[-1] for x in c.get("force", {})}:
+                fr, fp = next(v for x, v in c["force"].items() if x.split("/")[-1] == n.split("/")[-1])
+                q = pxy(next(p for p in B.fp[fr].Pads() if p.GetNumber() == fp))
+                out.append((num, [(q, q)], 2 * W_SIG, f"{fr}.{fp} (override)")); continue
             if k in ("signal", "power"):
                 pts = self.terminals(n, ref)
                 if not pts and k == "signal" and private(B, n):
@@ -518,7 +591,7 @@ class Model:
                 if B.region:     # tie-break along a long airwire: tap it near its in-region end, not halfway to the MCU
                     R = box(*B.region); loc = [q for q in pts if R.contains(Point(q))]
                     if loc and len(loc) < len(pts): out.append((num, [(q, q) for q in loc], W_LOCAL, "local"))
-                fx = B.fixed_pads(n, skip=(ref,))
+                fx = [x for x in B.fixed_pads(n, skip=(ref,)) if not x[0].startswith("TP")]
                 if k == "signal" and len(fx) == 1 and anchor_xy is None:
                     anchor_xy = pxy(fx[0][1]); anchor_c = pxy(B.fp[fx[0][0]])
         if anchor_xy:      # plane pins: a little outward from the anchor's body, so their via lands outside
@@ -562,7 +635,7 @@ class Model:
         return affinity.translate(c, x, y), [(affinity.translate(g, x, y) if g is not None else None, n) for _, n, _, g in pads]
 
 
-def seat(M, L, ref, step=0.2, radius=8.0, max_tests=25000):
+def seat(M, L, ref, step=0.2, radius=8.0, max_tests=120000):
     """best legal pose for ref given everything else; returns (x, y, rot, cost, T) or None."""
     T = M.targets(ref)
     pts = [q for _, segs, w, _ in T for s in segs for q in s if w >= W_POWER]
@@ -575,16 +648,27 @@ def seat(M, L, ref, step=0.2, radius=8.0, max_tests=25000):
         rx0, ry0, rx1, ry1 = M.B.region; x0, y0, x1, y1 = max(x0, rx0), max(y0, ry0), min(x1, rx1), min(y1, ry1)
         if (x1 - x0) * (y1 - y0) < 16 or x1 <= x0 or y1 <= y0:      # targets outside the region: search all of it
             x0, y0, x1, y1 = rx0, ry0, rx1, ry1
-    gx = np.arange(round(x0 / step) * step, x1 + step / 2, step); gy = np.arange(round(y0 / step) * step, y1 + step / 2, step)
-    G = np.array([(x, y) for x in gx for y in gy])
+    def grid(x0, y0, x1, y1, st):
+        gx = np.arange(round(x0 / st) * st, x1 + st / 2, st); gy = np.arange(round(y0 / st) * st, y1 + st / 2, st)
+        return np.array([(x, y) for x in gx for y in gy])
+    def scored(G, rots=(0, 90, 180, 270), keep=None):
+        out = []
+        for rot in rots:
+            c = M.cost_grid(ref, G, rot, T); k = np.argsort(c)[:keep]
+            out += [(float(c[i]), float(G[i][0]), float(G[i][1]), rot) for i in k]
+        return sorted(out)
+    G = grid(x0, y0, x1, y1, step)
     if len(G) == 0: return None
-    cands = []
-    for rot in (0, 90, 180, 270):
-        c = M.cost_grid(ref, G, rot, T)
-        k = np.argsort(c)
-        cands += [(float(c[i]), float(G[i][0]), float(G[i][1]), rot) for i in k]
-    cands.sort()
-    for cost, x, y, rot in cands:
+    if len(G) <= 30000:
+        cands = scored(G)
+    else:        # big window (a net that runs across the board): 1 mm coarse pass, then 0.2 mm round the best spots
+        coarse = scored(grid(x0, y0, x1, y1, 1.0), keep=60)
+        fine = {}
+        for _, cx, cy, rot in coarse:
+            for c, x, y, r in scored(grid(cx - 1.0, cy - 1.0, cx + 1.0, cy + 1.0, step), rots=(rot,)):
+                fine[(round(x, 2), round(y, 2), r)] = c
+        cands = sorted((c, x, y, r) for (x, y, r), c in fine.items()) + scored(grid(x0, y0, x1, y1, 0.5))
+    for cost, x, y, rot in cands[:max_tests]:
         cg, pads = M.geom(ref, x, y, rot)
         if L.check(ref, cg, pads) is None:
             return (round(x, 2), round(y, 2), rot, cost, T)
@@ -659,7 +743,7 @@ def cmd_rip(a):
     """rip the movable parts' routed nets inside the region (tracks with an end in it, vias in it), and their
     plane-pin taps; record where the remaining copper of each net leaves off (stubs) for the placer and router."""
     B = Board(a.board, read_refs(a.movable), a.region); b = B.b; R = box(*a.region)
-    nets = set(area_nets(B))
+    nets = set(area_nets(B)) - set(read_refs(a.keep_nets) if a.keep_nets else [])
     inside = lambda q: R.contains(Point(mm(q.x), mm(q.y)))
     mpads = [p for r in B.movable for p in B.fp[r].Pads()]
     gone = []; ends = collections.defaultdict(list)
@@ -704,23 +788,51 @@ def cmd_rip(a):
     print(f"ripped {len(gone) - nv} tracks and {nv} vias on {len(nets)} nets; {sum(map(len, stubs.values()))} stub ends on {len(stubs)} nets")
 
 
+def read_overrides(path, C):
+    """reviewer overrides: 'FIX REF' keeps a part where it is; 'ANCHOR REF NET REF2.PAD' pulls REF's pin on NET to
+    that one pad (the end it belongs at: an ADC filter at the MCU pin, a terminator at the connector)."""
+    if not path: return
+    for line in open(path):
+        w = line.split("#")[0].split()
+        if not w or w[1] not in C: continue
+        if w[0] == "FIX": C[w[1]]["role"] = "free"; C[w[1]]["fixed_by"] = "override"
+        elif w[0] == "ANCHOR":
+            ref2, pad = w[3].split(".", 1); c = C[w[1]]
+            if c["owner"] or c["role"] in ("decap", "rail-esd", "rail-link", "rail-filter"):
+                c["owner"] = ref2; c["owner_pad"] = pad; c["owner_fixed"] = True   # the IC this decap serves, per the schematic
+            else:
+                c.setdefault("force", {})[w[2]] = (ref2, pad)
+
+
 def cmd_place(a):
     stubs = json.load(open(a.stubs)) if a.stubs else {}
-    B = Board(a.board, read_refs(a.movable), a.region, stubs); C = classify(B)
+    B = Board(a.board, read_refs(a.movable), a.region, stubs); C = classify(B); read_overrides(a.overrides, C)
     M = Model(B, C); seq = order(C)
     before = {r: (pxy(B.fp[r]), B.fp[r].GetOrientationDegrees() % 360) for r in B.movable}
     side = {side_of(B.fp[r]) for r in B.movable}
-    Ls = {s: Legal(B, s) for s in side}
+    Ls = {s: Legal(B, s) for s in ("F", "B")}
+    Ls["F"].peers, Ls["B"].peers = [Ls["B"]], [Ls["F"]]
     nets = area_nets(B)
     # cost before (everything where it is)
     for r in B.movable: M.pos[r] = (before[r][0][0] - 0, before[r][0][1], int(round(before[r][1])) % 360)
     # the footprint origin can differ from the pad centroid; Shape offsets are about the origin, so M.pos is the origin
     rn0, _ = ratsnest(B, nets, M); cost0 = {r: M.cost_at(r, *M.pos[r]) for r in B.movable}
     print(f"before: ratsnest {rn0:.1f} mm over {len(nets)} nets, model cost {sum(cost0.values()):.1f}")
-    # round 1: lift everything, seat in priority order
+    # round 1: lift every part that is not already at its pin (--keep-good), seat in priority order
+    keep = {r for r in B.movable if C[r]["role"] == "free"}     # no pin to belong to (a 0R between two rails): stays
+    if a.keep_good > 0:
+        for r in B.movable:
+            d = anchor_dist(B, C, r)
+            if d is not None and d <= a.keep_good: keep.add(r)
+    assign_owner_pads(B, C, keep)
     for r in B.movable: M.pos[r] = None
     log = {}
+    for r in sorted(keep):
+        M.pos[r] = (before[r][0][0], before[r][0][1], int(round(before[r][1])) % 360)
+        Ls[side_of(B.fp[r])].put(r, *M.geom(r, *M.pos[r])); log[r] = "kept (free)" if C[r]["role"] == "free" else "kept (already at its pin)"
+    print(f"kept {len(keep)} parts (already within {a.keep_good} mm of their pin, or with no pin to belong to)")
     for r in seq:
+        if r in keep: continue
         L = Ls[side_of(B.fp[r])]
         res = seat(M, L, r, radius=a.radius) or seat(M, L, r, radius=2 * a.radius)
         if res is None:
@@ -737,16 +849,18 @@ def cmd_place(a):
     for rd in range(2, (1 if a.only_round1 else a.rounds) + 1):
         gain = 0.0
         for r in seq:
+            if C[r]["role"] == "free": continue
             L = Ls[side_of(B.fp[r])]; old = M.pos[r]; c_old = M.cost_at(r, *old)
             L.lift(r); M.pos[r] = None
             res = seat(M, L, r, radius=a.radius)
             M.pos[r] = old
-            if res and res[3] < c_old - 0.05:
+            if res and res[3] < c_old - (0.5 if log.get(r, "").startswith("kept") else 0.05):
                 M.pos[r] = res[:3]; gain += c_old - res[3]; log[r] = f"round {rd} re-seat"
             cg, pads = M.geom(r, *M.pos[r]); L.put(r, cg, pads)
         # swaps of identical footprints
         groups = collections.defaultdict(list)
-        for r in B.movable: groups[(B.fp[r].GetFPIDAsString(), side_of(B.fp[r]))].append(r)
+        for r in B.movable:
+            if C[r]["role"] != "free": groups[(B.fp[r].GetFPIDAsString(), side_of(B.fp[r]))].append(r)
         nsw = 0
         for key, rs in groups.items():
             L = Ls[key[1]]
@@ -905,12 +1019,16 @@ def main():
         return p
     s = common(sp.add_parser("select")); s.add_argument("--sheets", nargs="*")
     s = common(sp.add_parser("classify")); s.add_argument("--csv")
-    s = common(sp.add_parser("rip"), out=True)
+    s = common(sp.add_parser("rip"), out=True); s.add_argument("--keep-nets", help="file of nets whose copper stays (critical paths)")
     s = common(sp.add_parser("place"), out=True); s.add_argument("--rounds", type=int, default=4); s.add_argument("--radius", type=float, default=8.0)
     s.add_argument("--plan"); s.add_argument("--edits"); s.add_argument("--only-round1", action="store_true")
+    s.add_argument("--overrides", help="reviewer overrides file: FIX REF / ANCHOR REF NET REF2.PAD")
+    s.add_argument("--keep-good", type=float, default=0.0, help="leave parts already within this many mm of their pin")
+    s.add_argument("--held", help="held.json of routing reservations: active areas are no-part zones on their layers")
     s = common(sp.add_parser("measure")); s.add_argument("--json"); s.add_argument("--nets")
     a = ap.parse_args()
-    global HVP, FLOORPLAN, VIA
+    global HELD, HVP, FLOORPLAN, VIA
+    HELD = getattr(a, "held", None)
     POWER_GLOBS.extend(a.power_nets or []); FLOORPLAN = a.floorplan
     if a.hv: HVP = re.compile(a.hv)
     if a.via: VIA = tuple(float(x) for x in a.via.split("/"))

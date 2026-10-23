@@ -238,6 +238,14 @@ $KV $S/anchor_render.py placed.kicad_pcb after.png --movable movable.txt --regio
   that removal as DELETE lines, and `place` writes the moves and pin vias in the same edit format.
 - Read the `classify` table before placing. A wrong owner (a decap given to a connector, a pull-up whose
   pin sits outside the box) is cheaper to fix there than on the board.
+- Before the run that counts, have a reviewer (a subagent per subsystem works) read the `classify` table
+  against the schematic and the datasheets and write overrides: `FIX REF` for a part already right, `ANCHOR
+  REF NET REF2.PAD` for the end a part belongs at (an ADC filter at the MCU pin, a termination at the PHY pin,
+  ESD and port series parts at the connector) and for the IC a decap serves. The netlist alone gets decap
+  owners and series-part ends wrong; on a 280-part run the reviewers wrote 121 overrides.
+- On a placed board, pass `--keep-good 3` (leave parts already within 3 mm of their pin) and `--held` with the
+  areas other work owns (regulator cells, routing holds). Run subsystems on separate copies, four at a time
+  (each run holds the whole board in memory), then merge in priority order and re-seat the parts that clash.
 - Judge the result on the nets local to the box: ratsnest, routed vias and opens after a re-route,
   courtyard overlaps, and rail pads with their own via. Report those with before/after renders.
 
