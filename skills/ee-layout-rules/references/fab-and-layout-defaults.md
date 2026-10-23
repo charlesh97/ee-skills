@@ -5,14 +5,36 @@ and when a board needs something tighter: fine-pitch vias, via-in-pad, or HDI.
 The house values chosen from it are in `../rules/drc.json` (what KiCad enforces)
 and `../rules/layout.md` (practice). Change a house value there, not here.
 
-**Sources, fetched 2026-09-28.** Re-fetch before relying on a limit, because
-fabs change these pages.
+**Sources, fetched 2026-09-28; JLCPCB rigid re-fetched 2026-10-23** (every
+JLCPCB rigid row below matched, and the 6-layer, 2 oz, drill and hole-spacing
+rows were added). Re-fetch before relying on a limit, because fabs change
+these pages.
 - JLCPCB rigid: https://jlcpcb.com/capabilities/pcb-capabilities
 - JLCPCB flex: https://jlcpcb.com/capabilities/flex-pcb-capabilities
 - PCBWay: https://www.pcbway.com/capabilities.html
 - IPC-2226, *Design Standard for HDI Printed Boards* (Oct 2000 working draft,
   via iNEMI). IPC-2226A is the current revision, and the definitions quoted
   here carried over.
+
+**Where each JLC fact lives.** The full list of what JLCPCB publishes (rigid, HDI,
+flex, stackups, assembly, fees) is the `jlc-pcb` skill,
+`../../jlc-pcb/references/capabilities.md`; this file keeps the JLC/PCBWay comparison
+and the HDI and via-current reasoning. The rest of the house's JLC knowledge:
+
+| What | Where |
+|---|---|
+| Every JLCPCB limit and fee, one list, dated | `../../jlc-pcb/references/capabilities.md` |
+| Which via to use, and what the drill costs | `../rules/layout.md` L-32; `../rules/drc.json` `vias` (order of preference, first is the default) |
+| Board Setup floors and why each sits where it does at JLC | `../rules/drc.json` `_why` per field |
+| How much current a via carries at JLC plating | §3 below; `../rules/drc.json` `pin_vias.via_amps` |
+| Flex (JLC FPC) vias, no impedance control | §1 below; `../rules/drc.json` flex profiles; L-42 |
+| Part lookup: LCSC code, basic or extended, JLC stock | `../../schematic-capture/scripts/jlc.py` (search, code, check); D-46 in `../../ee-schematic-rules/rules/schematic.md` |
+| BOM and part fields graded against JLC at review | schematic-review E-7, E-8 |
+| Gerbers, drill, BOM and CPL in JLC's formats | `../../release/references/jlcpcb-package.md` |
+
+`jlc.py` calls JLC's own parts endpoint, which isn't a published API: if it
+stops answering, fix the script, and never fall back to a part code from
+memory.
 
 ---
 
@@ -21,6 +43,12 @@ fabs change these pages.
 | Feature | JLCPCB rigid | PCBWay | JLCPCB flex (FPC) |
 |---|---|---|---|
 | Layers | 1–32 | 1–14 standard | 1, 2, 4 |
+| FR-4 thickness | 0.4/0.6/0.8/1.0/1.2/1.6/2.0 (2.5+ only on 12+ layers) | — | 0.07–0.45 finished |
+| Copper weight | outer: 2L 1–4.5 oz, multilayer **1 or 2 oz only**; inner 0.5/1/2 oz, **0.5 oz by default** | — | — |
+| Drill range (PTH) | 2L and multilayer 0.15–6.3 (0.1 only ≤1 mm thick, ENIG/OSP, "more costly"); 1L 0.3–6.3 | — | — |
+| Hole size tolerance | PTH +0.13/−0.08; press-fit ±0.05 | — | — |
+| Min NPTH | 0.50 | — | — |
+| Aspect ratio | not published (0.15 drill offered on 1.6 mm multilayer, about 10.7:1) | — | — |
 | Min trace / space | 2L 0.10/0.10; multilayer 0.09/0.09 ("3 mil acceptable in BGA fan-outs") | 0.10 (4 mil) standard | 4/4 mil at 1 oz |
 | Trace / space at 2 oz | 2L 0.16/0.16; ML 0.15/0.15 | 6/8 mil (70 µm, normal) | — |
 | Min via drill / pad | 0.15 / 0.25 (0.1/0.2 only if board ≤1 mm and ENIG/OSP) | drill 0.15–6.0 | regular 0.3/0.55; extreme 2L 0.10/0.30, 4L 0.15/0.35 (extra cost) |
@@ -29,13 +57,19 @@ fabs change these pages.
 | Via price, as the house reviewer gave it (2026-10-04) | 0.3 mm drill no added cost; 0.2 mm adds cost; 0.15 mm additional cost; 0.1 mm only on boards < 1 mm thick. Stricter than the published note on 0.2 mm with a ≥ 0.45 pad: check the quote before relying on either | — | — |
 | PTH annular ring | 2L 0.25 rec / 0.18 min; ML 0.20 rec / 0.15 min; 2 oz 0.254 | 0.15 | as above |
 | Via hole-to-hole | 0.2 | ≥11 mil (0.28) for vias ≤0.45 | — |
-| Via hole to track | 0.2 | — | — |
+| Pad (PTH) hole-to-hole | 0.45 | — | — |
+| Via hole to track | 0.2 (inner layers: via hole to copper 0.2) | — | — |
+| PTH hole to track | 0.28 min, 0.35 recommended (inner layers: 0.3 to copper) | — | — |
+| NPTH to track | 0.2 | — | — |
 | Pad to track | 0.1 (0.09 locally at BGA pads) | — | — |
 | SMD pad to pad, different nets | 0.15 | — | — |
 | Copper to routed edge | ≥0.2 (V-cut ≥0.4) | 0.25 normal, 0.20 medium | ≥0.3 (laser outline) |
 | Soldermask bridge | 0.10 green/colours, 0.13 black/white, 0.20 at 2 oz | 4 mil (0.10) green <2 oz | 0.5 (coverlay) |
 | Silkscreen line / text height | ≥0.15 / ≥1.0 mm | 0.15 / 0.8 mm | ≥0.15 / ≥1.0 mm |
-| Via-in-pad (filled + capped) | epoxy or copper paste, via Ø 0.15–0.55; **default on 6L+** | listed, no dims | — |
+| Via-in-pad (filled + capped) | epoxy or copper paste, via Ø 0.15–0.55; **copper paste is the default on 6L+** | listed, no dims | — |
+| Plugged vias (soldermask) | via ≤0.5 mm | — | — |
+| Castellated holes | hole ≥0.5, hole to edge ≥1, hole to hole ≥0.5; board ≥10×10 mm, ≥0.6 mm thick | — | — |
+| Surface finish | HASL (leaded / lead-free), ENIG, OSP; **no HASL on 6+ layers** or boards ≤0.4 mm | — | — |
 | Blind / buried / HDI | 1-, 2-, 3-step; laser blind 0.075–0.15; HDI trace 3/3 mil | 1+N+1 normal; any-layer medium; 2+N+2 high difficulty | — |
 | Impedance control | 4L+, ±10% (±5% on request) | ±10% (±5 Ω at ≤50 Ω) | **not supported** (width only) |
 | Finished-thickness tolerance | ±10% ≥1 mm; ±0.1 mm <1 mm | same | — |

@@ -280,6 +280,43 @@ consequence, state the assumption). Both reviews write to it and board-doc reads
   being regenerated past `routed`. The Mermaid seed must be edited, never shipped raw.
   It never invents a value.
 
+### jlc-pcb — what JLCPCB builds and assembles
+
+- **Purpose:** one list of every limit JLCPCB publishes, so a rule, a design or a review
+  checks a number against the fab instead of memory.
+- **Files:** `references/capabilities.md`: rigid (material, size, thickness, copper,
+  drills, vias and the via price line, trace and space by copper weight, rings, hole
+  spacing, mask, silk, outline, V-cut, panels, castellation, plated edges, backdrill,
+  impedance), standard 4- and 6-layer stackup names, HDI, flex, assembly (Economic and
+  Standard) and the assembly fee table, each section sourced and dated (2026-10-23).
+- **How it works:** look up the row and quote it with its date; re-read the page when a
+  design sits close to a limit, and update the row. Fab limits only: the house values
+  chosen inside them stay in `ee-layout-rules`.
+- **Bounds:** never quotes a JLC number from memory. A row the list lacks is fetched
+  from the source page and added, not guessed. Per-layer stackup thicknesses are read
+  from JLC's page, not copied.
+
+### Before the schematic and after the board: the stage skills
+
+These seven ran only from a local skills folder until 2026-10-23 and now live here. Each
+loads `ee-schematic-rules` (and `layout-constraints` also `ee-layout-rules`) in place
+of the old single house-rules skill; nothing else in them changed beyond dropping one
+org name and adding inner layers to the 6+ layer gerber call.
+
+- **requirements** — interviews the engineer, writes `project.yaml` and
+  `requirements.yaml`; asks the `ee-schematic-rules/references/asks.yaml` questions.
+- **system-architecture** — blocks, part classes, interconnect, `system.yaml`.
+- **power-architecture** — the power tree, rail currents per mode, regulator choice,
+  sequencing, `power_tree.yaml`.
+- **architecture-review** — independent review of `system.yaml` and
+  `power_tree.yaml`, recomputing the budget (`references/rubric.md`).
+- **part-spec** — finds a buyable part per block or rail and writes its part record
+  (`references/part-record-format.md`).
+- **layout-constraints** — stackup, net classes, `.kicad_dru`, critical nets and the
+  placement spec before layout; uses layout-review's DRU cookbook.
+- **release** — preflight (read-only) and, on an explicit instruction naming the
+  revision, the fab package (`references/jlcpcb-package.md`, `scripts/emit_cpl.py`).
+
 ---
 
 ## 3. Bounds and simplicity
@@ -323,9 +360,9 @@ board, the library) waits for the human to agree.
 
 - None of the new caps and gates has been through a test run yet.
 - The 2026-10-04 rules (L-17 corners, L-32, L-43 pitch, D-45, D-46) are
-  *(draft)* until signed off. JLC's published price note says a 0.2 mm drill
-  with a pad ≥ 0.45 mm costs nothing extra, where the review says 0.2 adds
-  cost; L-32 follows the review, so check a quote. `jlc.py` uses JLC's
+  *(draft)* until signed off. JLC's published price note (re-read 2026-10-23)
+  says a 0.2 mm drill with a pad ≥ 0.45 mm costs nothing extra, where the
+  review says 0.2 adds cost; L-32 follows the review, so check a quote. `jlc.py` uses JLC's
   unpublished web endpoint and will break if JLC changes it.
 - The Board-Setup clamp question needs one clean probe on 10.0.6 to settle it.
 - Two items rescued from the cut still have no home: the power-tree arithmetic and the
