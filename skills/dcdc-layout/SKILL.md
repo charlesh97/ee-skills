@@ -50,10 +50,10 @@ Tools: KiCad 10's Python (`$KPY`, with shapely and Pillow; the KiCadRoutingTools
 
 | Script | What it does |
 |---|---|
-| `scripts/check_regulator.py BOARD SPEC.json [--json] [--render DIR]` | The cell check: every limit in `references/cell-check.md`, per regulator, PASS/WARN/FAIL with the number; exit 1 on any FAIL. Read only. |
+| `scripts/check_regulator.py BOARD SPEC.json [--json] [--render DIR] [--window X0,Y0,X1,Y1 \| --no-window]` | The cell check (by default it reads only copper within 10 mm of the spec's parts, so a full board runs in seconds): every limit in `references/cell-check.md`, per regulator, PASS/WARN/FAIL with the number; exit 1 on any FAIL. Read only. |
 | `scripts/cell.py extract BOARD --refs IC,L,C... --origin X,Y` | Turns a laid-out cell (a demo board, or a good cell on another board) into a cell spec in the IC's frame. |
 | `scripts/cell.py build CELL.json --source BOARD -o DEMO` | Builds a demo board from a spec, with the source board's stackup, net classes and footprints. |
-| `scripts/cell.py fit CELL.json --target BOARD --region X0,Y0,X1,Y1 [--parts CORE] [--movable REFS]` | Searches positions and rotations for the cell on a board and ranks them by what is in the way (parts, holes, keep-outs, the edge, other-net vias and tracks under its copper). Read only. |
+| `scripts/cell.py fit CELL.json --target BOARD --region X0,Y0,X1,Y1 [--parts CORE] [--movable REFS]` | Searches positions and rotations for the cell on a board and ranks them by what is in the way: part courtyards, other-net pads within `--clearance` of its pours and vias, holes, keep-outs, the edge, and other-net vias and tracks under its copper on every layer. Read only. |
 | `scripts/cell.py place CELL.json --target BOARD --at X,Y --rot R -o COPY` | Places a cell onto a copy of a board: moves its parts and replaces the copper on its private nets. Each pour on a shared net is skipped where a board pour of that net covers it, merged into a board pour it overlaps, and added where it touches none, so zones never stack (L-23). It prints which happened. |
 
 ## Method

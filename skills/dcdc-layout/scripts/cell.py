@@ -22,7 +22,8 @@ tracks), stored as JSON in the cell's own frame (mm, the IC's centre at 0,0 unle
 
   $KPY cell.py fit cell.json --target BOARD --region X0,Y0,X1,Y1 [--parts IC,L,CIN,COUT] [--movable REFS] [--prefer X,Y]
         Read only. Tries every pose on a grid in the region at each rotation and ranks them: board parts whose
-        courtyards the cell's rigid parts hit, holes, keep-outs and the edge, then other-net vias and tracks
+        courtyards the cell's rigid parts hit, other-net board pads within --clearance of the cell's pours,
+        vias and outer tracks (both sides), holes, keep-outs and the edge, then other-net vias and tracks
         under the cell's copper on every layer (a buried sense route counts against the board's inner lanes). Fit the rigid core first; the periphery is re-seated around it afterwards.
 
 pcbnew's SaveBoard drops the net classes from the .kicad_pro, so --project copies a project file next to
@@ -321,12 +322,17 @@ def fit(a):
 
     # obstacles on the target, without the cell's own parts and private copper
     side_of = lambda f: "B" if f.IsFlipped() else "F"
-    obs = {"F": [], "B": []}; holes = []
+    obs = {"F": [], "B": []}; holes = []; padobs = {"F": [], "B": []}
     for f in b.GetFootprints():
         r = f.GetReference()
         if r in refs: continue
         obs[side_of(f)].append((r, court(f)))
         for p in f.Pads():
+            if r not in free_ok:          # a pad under the cell's pours, vias or tracks is in the way too
+                bb = p.GetBoundingBox(); pg = sbox(mm(bb.GetLeft()), mm(bb.GetTop()), mm(bb.GetRight()), mm(bb.GetBottom()))
+                th = p.GetAttribute() in (pcbnew.PAD_ATTRIB_PTH, pcbnew.PAD_ATTRIB_NPTH)
+                for sd, lid in (("F", pcbnew.F_Cu), ("B", pcbnew.B_Cu)):
+                    if th or p.IsOnLayer(lid): padobs[sd].append((r, p.GetNetname(), pg))
             if p.GetAttribute() in (pcbnew.PAD_ATTRIB_PTH, pcbnew.PAD_ATTRIB_NPTH):
                 holes.append((r, Point(P(p.GetPosition())).buffer(max(mm(p.GetSize().x), mm(p.GetSize().y)) / 2)))
     trk = {b.GetLayerName(l): [] for l in b.GetEnabledLayers().CuStack()}; ovias = []
@@ -346,6 +352,14 @@ def fit(a):
         pass
     T = lambda items: (STRtree([g for _, g in items]) if items else None, items)
     TO = {k: T(v) for k, v in obs.items()}; TH = T(holes); TT = {k: T(v) for k, v in trk.items()}; TV = T(ovias)
+    TP = {k: (STRtree([g for _, _, g in v]) if v else None, v) for k, v in padobs.items()}
+    clr = a.clearance
+    cu_pad = [(ln[0], net, g.buffer(clr)) for (ln, net, g) in cu if ln in ("F.Cu", "B.Cu")]
+    via_pad = [(net, g.buffer(clr)) for (net, g) in vias]
+
+    def pad_hits(sd, G, net):
+        t, its = TP[sd]
+        return set() if t is None else {its[i][0] for i in t.query(G) if its[i][1] != net and its[i][2].intersects(G)}
 
     def hits(tree, g):
         t, its = tree
@@ -384,16 +398,26 @@ def fit(a):
                     for ln in TT: th[ln] += sum(1 for (on, og) in hits(TT[ln], G) if on != net)
                     vh |= {id(og) for (on, og) in hits(TV, G) if on != net}
                 th = {k: v for k, v in th.items() if v}
-                res.append(dict(at=(round(X, 2), round(Y, 2)), rot=R, parts=sorted(parts), area=round(area, 2), vias=len(vh), tracks=sum(th.values()), by_layer=th,
+                padparts = set()
+                for (sd, net, g) in cu_pad:
+                    G = affine_transform(g, M)
+                    if any(pp.buffer(0.01).contains(affine_transform(g.buffer(-clr), M)) for pp in pours.get((net, sd + ".Cu"), [])): continue
+                    padparts |= pad_hits(sd, G, net)
+                for (net, g) in via_pad:
+                    G = affine_transform(g, M)
+                    padparts |= pad_hits("F", G, net) | pad_hits("B", G, net)
+                padparts -= parts
+                res.append(dict(at=(round(X, 2), round(Y, 2)), rot=R, parts=sorted(parts), pads=sorted(padparts), area=round(area, 2), vias=len(vh), tracks=sum(th.values()), by_layer=th,
                                 bad=bad, dist=round(math.dist((X, Y), pref), 2)))
                 n += 1
             Y += a.step
         X += a.step
     ok = [r for r in res if not r["bad"]]
-    ok.sort(key=lambda r: (len(r["parts"]), r["area"], r["vias"] + r["tracks"], r["dist"]))
+    ok.sort(key=lambda r: (len(r["parts"]) + len(r["pads"]), r["area"], r["vias"] + r["tracks"], r["dist"]))
     print(f"{n} poses tried, {len(ok)} on the board and clear of keep-outs; best {min(a.top, len(ok))}:")
     for r in ok[:a.top]:
         print(f"  at {r['at']} rot {r['rot']:>5}: {len(r['parts'])} parts in the way {r['parts']} ({r['area']} mm²), "
+              f"pads of {len(r['pads'])} more under cell copper {r['pads']}, "
               f"{r['vias']} vias and {r['tracks']} tracks under cell copper ({', '.join(f'{k} {v}' for k, v in r['by_layer'].items()) or 'none'}), "
               f"{r['dist']} mm from the preferred spot")
     if a.json: json.dump(ok[:200], open(a.json, "w"), indent=1)
@@ -413,5 +437,6 @@ ft.add_argument("--step", type=float, default=0.5); ft.add_argument("--rots", de
 ft.add_argument("--parts", help="the cell's rigid parts (default: all); the rest are re-seated after the fit")
 ft.add_argument("--movable", help="board parts you are willing to move; they are not counted in the way")
 ft.add_argument("--top", type=int, default=10); ft.add_argument("--json")
+ft.add_argument("--clearance", type=float, default=0.2, help="mm kept between cell copper and other-net board pads")
 a = ap.parse_args()
 {"extract": extract, "build": build, "place": place, "fit": fit}[a.cmd](a)

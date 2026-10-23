@@ -35,10 +35,32 @@ LIMITS = {                       # defaults; a spec entry may override any of th
 ap = argparse.ArgumentParser()
 ap.add_argument("board"); ap.add_argument("spec")
 ap.add_argument("--json"); ap.add_argument("--render")
+ap.add_argument("--window", help="X0,Y0,X1,Y1: measure only copper inside this box (default: the spec's parts plus --margin)")
+ap.add_argument("--margin", type=float, default=10.0, help="mm round the spec's parts for the default window")
+ap.add_argument("--no-window", action="store_true", help="measure the whole board (slow on a big ground pour)")
 a = ap.parse_args()
 SPEC = json.load(open(a.spec))
 mm = pcbnew.ToMM
 b = pcbnew.LoadBoard(a.board)
+# The window. A full board's ground pour makes the ground path search slow (minutes), and nothing a cell check
+# measures lies far from the cell, so by default only copper near the spec's parts is read. A sense route or a
+# rail entry that leaves the window is reported, so the window can be widened.
+WIN = None
+if not a.no_window:
+    if a.window:
+        WIN = box(*[float(v) for v in a.window.split(",")])
+    else:
+        refs = set()
+        for sp_ in SPEC:
+            refs |= {sp_["ic"], sp_["hf_cap"], sp_["inductor"]} | set(sp_.get("bulk_caps", [])) | set(sp_.get("out_caps", []))
+            refs |= {x.split(".")[0] for x in sp_.get("hot_loop", []) + sp_.get("sense_pins", []) + sp_.get("rail_entries", [])}
+        xs, ys = [], []
+        for f in b.GetFootprints():
+            if f.GetReference() in refs:
+                bb = f.GetBoundingBox(False); xs += [mm(bb.GetLeft()), mm(bb.GetRight())]; ys += [mm(bb.GetTop()), mm(bb.GetBottom())]
+        if xs:
+            WIN = box(min(xs) - a.margin, min(ys) - a.margin, max(xs) + a.margin, max(ys) + a.margin)
+inwin = (lambda g: True) if WIN is None else (lambda g: g.intersects(WIN))
 zs = [z for z in b.Zones() if not z.GetIsRuleArea()]
 pcbnew.ZONE_FILLER(b).Fill(zs)
 CU = list(b.GetEnabledLayers().CuStack())
@@ -82,6 +104,9 @@ def padgeom(p, layer):
 items = collections.defaultdict(list); PADS = {}; PADOBJ = {}
 fps = {f.GetReference(): f for f in b.GetFootprints()}
 for f in b.GetFootprints():
+    if WIN is not None:
+        bb = f.GetBoundingBox(False)
+        if not box(mm(bb.GetLeft()), mm(bb.GetTop()), mm(bb.GetRight()), mm(bb.GetBottom())).intersects(WIN): continue
     for p in f.Pads():
         lab = f"{f.GetReference()}.{p.GetNumber()}"; PADOBJ[lab] = p
         for l in CU:
@@ -97,28 +122,40 @@ for t in b.GetTracks():
         top, bot = CU.index(t.TopLayer()), CU.index(t.BottomLayer())
         d = dict(net=t.GetNetname(), kind="via", geom=Point(c).buffer(w / 2, 16), c=c, w=w, drill=mm(t.GetDrillValue()),
                  layers=[LN[l] for l in CU[top:bot + 1]])
+        if not inwin(d["geom"]): continue
         for ln in d["layers"]: items[ln].append(d)
     else:
         s, e = t.GetStart(), t.GetEnd(); w = mm(t.GetWidth())
         ls = LineString([(mm(s.x), mm(s.y)), (mm(e.x), mm(e.y))])
         d = dict(net=t.GetNetname(), kind="track", geom=ls.buffer(w / 2, 8), line=ls, w=w, layer=b.GetLayerName(t.GetLayer()), length=ls.length)
+        if not inwin(d["geom"]): continue
         items[d["layer"]].append(d)
     TR.append(d)
 for z in zs:
     for l in CU:
         if z.IsOnLayer(l) and z.HasFilledPolysForLayer(l):
             for g in sps(z.GetFilledPolysList(l)):
-                items[LN[l]].append(dict(net=z.GetNetname(), kind="zone", geom=g, zname=z.GetZoneName(), layer=LN[l]))
+                if WIN is not None:
+                    if not g.intersects(WIN): continue
+                    g = g.intersection(WIN)
+                    if g.is_empty: continue
+                for gg in (g.geoms if hasattr(g, "geoms") else [g]):
+                    if gg.geom_type == "Polygon":
+                        items[LN[l]].append(dict(net=z.GetNetname(), kind="zone", geom=gg, zname=z.GetZoneName(), layer=LN[l]))
 TREE = {ln: STRtree([d["geom"] for d in items[ln]]) for ln in items}
 
 def q(ln, geom, net=None, kinds=None):
+    if ln not in TREE: return []
     return [items[ln][i] for i in TREE[ln].query(geom)
             if (net is None or items[ln][i]["net"] == net) and (not kinds or items[ln][i]["kind"] in kinds)
             and items[ln][i]["geom"].intersects(geom)]
 
+_COMPS = {}
 def comps(net, ln):
-    g = unary_union([d["geom"] for d in items[ln] if d["net"] == net])
-    return list(g.geoms) if hasattr(g, "geoms") else ([g] if not g.is_empty else [])
+    if (net, ln) not in _COMPS:
+        g = unary_union([d["geom"] for d in items[ln] if d["net"] == net])
+        _COMPS[(net, ln)] = list(g.geoms) if hasattr(g, "geoms") else ([g] if not g.is_empty else [])
+    return _COMPS[(net, ln)]
 
 def comp_of(net, ln, geom):
     return next((c for c in comps(net, ln) if c.intersects(geom)), None)
@@ -134,20 +171,28 @@ def netof(lab): return PADOBJ[lab].GetNetname()
 def via_planes(v):
     return [ln for ln in v["layers"] if any(d["kind"] == "zone" and d["net"] == v["net"] for d in q(ln, Point(v["c"])))]
 
+_ADJ = {}
 def fpath(net, alab, blab_or_pt, ln):
     """Centre-line path over one net's tracks on one layer (pads and vias join track ends; pour bridges up to 0.6 mm)."""
     key = lambda p: (round(p[0], 3), round(p[1], 3))
-    adj = collections.defaultdict(list)
-    for d in items[ln]:
-        if d["net"] == net and d["kind"] == "track":
-            p0, p1 = key(d["line"].coords[0]), key(d["line"].coords[-1])
-            adj[p0].append((p1, d["length"])); adj[p1].append((p0, d["length"]))
-    for d in items[ln]:
-        if d["net"] == net and d["kind"] in ("pad", "via"):
-            pc = key((d["geom"].centroid.x, d["geom"].centroid.y))
-            for n in list(adj):
-                if n != pc and d["geom"].buffer(0.15).contains(Point(n)):
-                    w = math.dist(n, pc); adj[n].append((pc, w)); adj[pc].append((n, w))
+    adj = _ADJ.get((net, ln))
+    if adj is None:
+        adj = collections.defaultdict(list)
+        for d in items[ln]:
+            if d["net"] == net and d["kind"] == "track":
+                p0, p1 = key(d["line"].coords[0]), key(d["line"].coords[-1])
+                adj[p0].append((p1, d["length"])); adj[p1].append((p0, d["length"]))
+        ends = list(adj)
+        if ends:
+            et = STRtree([Point(n) for n in ends])
+            for d in items[ln]:
+                if d["net"] == net and d["kind"] in ("pad", "via"):
+                    pc = key((d["geom"].centroid.x, d["geom"].centroid.y)); gb = d["geom"].buffer(0.15)
+                    for i in et.query(gb):
+                        n = ends[i]
+                        if n != pc and gb.contains(Point(n)):
+                            w = math.dist(n, pc); adj[n].append((pc, w)); adj[pc].append((n, w))
+        _ADJ[(net, ln)] = adj
     A = pad(alab, ln); apt = (A.centroid.x, A.centroid.y)
     if isinstance(blab_or_pt, str): Bg = pad(blab_or_pt, ln); bpt = (Bg.centroid.x, Bg.centroid.y)
     else: bpt = tuple(blab_or_pt); Bg = Point(bpt).buffer(0.35)
@@ -271,6 +316,8 @@ for sp in SPEC:
         return tot
     for lab in sp.get("sense_pins", []):
         got, hit = trace(lab, netof(lab)); trk = [d for d in got if d["kind"] == "track"]
+        if WIN is not None and any(not WIN.buffer(-0.5).contains(d["geom"]) for d in got):
+            check(r, f"sense {lab} inside the window", False, "the route reaches the window edge: widen --margin or pass --no-window", "-", warn=True)
         run = run_near(trk, ctr(lab))
         lens = collections.Counter(); [lens.update({d["layer"]: d["length"]}) for d in trk]
         check(r, f"sense {lab} near SW past the escape ({comp_layer})", run <= lim["sense_run_tol_mm"],
