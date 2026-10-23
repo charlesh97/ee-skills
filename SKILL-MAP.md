@@ -322,9 +322,9 @@ board, the library) waits for the human to agree.
 
 - None of the new caps and gates has been through a test run yet.
 - The 2026-10-04 rules (L-17 corners, L-32, L-43 pitch, D-45, D-46) are
-  *(draft)* until signed off. JLC's published price note says a 0.2 mm drill
-  with a pad ≥ 0.45 mm costs nothing extra, where the review says 0.2 adds
-  cost; L-32 follows the review, so check a quote. `jlc.py` uses JLC's
+  *(draft)* until signed off. JLC's published price note (re-read 2026-10-23)
+  says a 0.2 mm drill with a pad ≥ 0.45 mm costs nothing extra, where the
+  review says 0.2 adds cost; L-32 follows the review, so check a quote. `jlc.py` uses JLC's
   unpublished web endpoint and will break if JLC changes it.
 - The Board-Setup clamp question needs one clean probe on 10.0.6 to settle it.
 - Two items rescued from the cut still have no home: the power-tree arithmetic and the
