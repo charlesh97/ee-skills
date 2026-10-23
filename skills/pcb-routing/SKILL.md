@@ -56,7 +56,7 @@ errors, vias, minutes). Don't use KRT's own failure tally, which undercounts.
 
 | Outcome | Condition | Then |
 |---|---|---|
-| **Done** | 0 unconnected, 0 copper DRC errors, spec widths met, every `critical-nets:` entry routed deliberately, accepted and locked (L-49), no router-drawn copper on a plane layer (L-36), the planes from the layer plan whole, the edge ground ring in place (L-38), a via on every power pin (L-39), every GND pour stitched as one group (L-43), and clean copper: `check_weird` finds nothing, and `check_copper.py` fails nothing but `via-off-center` (step 3) | hand back |
+| **Done** | 0 unconnected, 0 copper DRC errors, spec widths met, every `critical-nets:` entry routed deliberately and accepted (L-49), no track or via left locked (copper is locked only during a parallel merge round), no router-drawn copper on a plane layer (L-36), the planes from the layer plan whole, the edge ground ring in place (L-38), a via on every power pin (L-39), every GND pour stitched as one group (L-43), and clean copper: `check_weird` finds nothing, and `check_copper.py` fails nothing but `via-off-center` (step 3) | hand back |
 | **Good enough (the target)** | ≥ 90% routed, **and** 0 shorts or clearance errors in the routed copper, no part moved, no floor loosened | stop, hand back, and ask whether to keep going |
 | **Out of budget** | the budget below is spent and good-enough isn't reached | stop, hand back the best board, and ask |
 | **Needs more layers** | the layer plan, or a congestion diagnosis re-checked with `layer_capacity.py`, says the signal layers can't hold the nets without taking a plane (L-37) | stop, hand back the numbers, and ask: add layers, re-place, or give up the plane knowingly |
@@ -115,7 +115,7 @@ bulk of the work.
    the toolbox, the DONE conditions and the routing traps, and they change
    faster than this skill could track.
 2. Load `ee-layout-rules`, then read `ee-layout-rules/rules/layout.md`: L-01…L-05
-   (setup) and L-20…L-39 and L-43…L-49 (routing), plus L-40…L-42 on flex, are the rules this
+   (setup) and L-20…L-39 and L-43…L-60 (routing), plus L-40…L-42 on flex, are the rules this
    skill routes to.
 3. **The rules are on the board before routing starts.** Run
    `$KPY <ee-skills>/skills/ee-layout-rules/scripts/board_rules.py check <board> --profile rigid|flex`.
@@ -296,9 +296,16 @@ Also:
     gives F=H, In1=V, In2=H, B=V. With a plane on In1, that puts the one
     adjacent signal pair, In2 and B, at right angles, as L-26 wants. Pass the
     same order to every step. The preference is a soft cost
-    (`--direction-preference-cost`, taken by `route.py` and `route_diff.py`).
-    Read its current default in `py_router/routing_defaults.py`, because KRT's
-    playbook and code have disagreed on it, and record the value used.
+    (`--direction-preference-cost`, taken by `route.py` and `route_diff.py`),
+    charged per 0.1 mm off-axis step against 1,000 per step, while a via costs
+    `--via-cost` steps (75 by default). So a wrong-way run beats a via pair
+    while it is shorter than 15,000 / cost mm at the default via cost: 60 mm at
+    a cost of 250. Raise it until wrong-way stretches longer than a few lane
+    pitches lose to a via pair (5,000 puts break-even at 3 mm), as far as
+    completion allows. Read the current default in `py_router/routing_defaults.py`,
+    because KRT's playbook and code have disagreed on it, grade completion
+    against the default on a copy, and record the value used. Hand-laid route
+    tables and any other router are graded the same way: 80% per inner layer.
   - **Plane layers are forbidden** (L-36). Pass `--layer-costs` in
     `--layers` order with `-1` on every plane layer, GND and rail planes
     alike, in every KRT step, for example
@@ -321,7 +328,7 @@ sake of it.
 
 The autorouter is for the bulk, not for the planes or the critical nets (L-36,
 L-49). KRT's `pcb-free-agent` skill in `route` mode, which never moves a part,
-may run step 4 below, after steps 1 to 3 are done and locked. Its toolbox and
+may run step 4 below, after steps 1 to 3 are done and accepted. Its toolbox and
 traps apply throughout. Its stop rules don't: use the budget in "Success,
 and when to stop" above.
 From inside the checkout that is
@@ -330,8 +337,12 @@ follow its SKILL.md.
 
 **Either way, the order is L-36's, and each step is checked before the next.**
 If you use `pcb-free-agent`, hand it a board with steps 1 to 3 done and
-locked, give it the layer order and the layer costs, and check its manifest
-didn't touch the locked copper or the plane layers. If you run the chain yourself:
+accepted, give it the layer order and the layer costs, and check its manifest
+didn't touch the critical copper (compare its UUIDs with
+`review/routing/critical.md`) or the plane layers. Copper is locked only while
+a parallel merge round or an autorouter pass is open (KRT rips unlocked copper
+outside its nets even with `--keep-input-copper`); unlock everything except
+footprints when it closes (L-49). If you run the chain yourself:
 
 1. **Planes, rails and pin vias, drawn, not routed** (L-36 step 2), with the
    edge ground ring (L-38): draw the ring in the edge band on the outer layers
@@ -349,12 +360,12 @@ didn't touch the locked copper or the plane layers. If you run the chain yoursel
 2. **Fanout, all of it, before any track** (L-47, L-39, L-43). On a board
    with a BGA, a WLCSP or a repeated cell array, run `hdi-breakout` first: it
    plans and places this group and writes the `breakout:` block of the spec,
-   and this step only checks that the group is there and locked. Otherwise decide per ball
+   and this step only checks that the group is there. Otherwise decide per ball
    ring: outer ring on the surface with a dogbone to a via wholly outside the
    ball field, inner rings via-in-pad at the ball centre (declared on the
    spec's `allow-via-in-pad:` line). Place every fanout via, the vias at every power
    entry (two or more per
-   rail, L-21) and, on an HDI stack, the shared GND taps, as one locked group with
+   rail, L-21) and, on an HDI stack, the shared GND taps, as one group with
    the pin vias from step 1.
    `bga_fanout.py` / `qfn_fanout.py --component <ref>` for each BGA, WLCSP, QFN
    and dense connector, with the layer order from step 1, so the escape vias
@@ -374,7 +385,7 @@ didn't touch the locked copper or the plane layers. If you run the chain yoursel
    `route.py --nets` on one entry at a time is allowed only as a draft that
    you then inspect and accept or redo; never a batch of critical nets in one
    pass. Render each one, check it against its L-49 line (pairing, loop,
-   where a Kelvin pair leaves the shunt, what it runs past), then lock it.
+   where a Kelvin pair leaves the shunt, what it runs past), then accept it.
    Record each entry's result in `review/routing/critical.md`. Show the
    human the critical copper before step 4.
 4. **Everything else.** `route.py --nets '*'` with the layer costs (plane
@@ -469,7 +480,7 @@ neither of them covers everything alone:
 | a via in an SMD pad or paste aperture, same net included, not declared via-in-pad | L-30 | `check_copper` `via-in-pad` |
 | bends sharper than 90°, 90° corners, off-angle track | L-25 | `check_copper` `sharp-bend`, `right-angle`, `odd-angle` |
 | widths in no class and not on the list (hand tapers) | L-20 | `check_copper` `off-list-width` |
-| a layer's length not on its declared axis; a net running more than 3 mm on a plane layer | L-26 | `check_copper` `direction` |
+| an inner signal layer under 80% of its length in its direction (exceptions left out), with the off-axis runs listed; a net running more than 3 mm on a plane layer | L-26 | `check_copper` `direction` |
 | signal or power copper within the edge margin; the GND ring missing or broken; ring stretches without stitching vias | L-38 | `check_copper` `edge-margin`, `edge-ring`, `edge-stitch` |
 | a power pad without its own via; a ground pad without one; one via shared by several pins | L-39 | `check_copper` `power-pin-via`, `gnd-pin-via`, `shared-pin-via` |
 | a GND fill island with too few vias to the plane; a GND zone that fills little of its outline; a pour cut into two large islands by one track | L-23, L-43 | `check_copper` `pour-island`, `pour-fill`, `pour-split` |

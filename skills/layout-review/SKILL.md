@@ -170,8 +170,11 @@ $KPY <ee-skills>/skills/ee-layout-rules/scripts/check_copper.py <board> \
 It reports off-center via ends (L-33), overlapping and folded-back same-net
 copper, and loops on poured nets (L-34), track on a net's own plane layer
 (L-35), sharp bends, 90° corners and off-angle track (L-25), off-list widths and
-hand tapers (L-20), and each layer's track length by direction against its
-declared job (L-26). Most of these are too small to see in a render, so this is
+hand tapers (L-20), and layer discipline against the declared jobs (L-26): every
+inner signal layer's share in its one direction against 80%, whatever router
+laid it, leaving out the routing spec's `direction-exceptions:`. It lists the
+runs that travel mostly off axis, with net and location, so the finding names
+what to re-lay. Outer layers are reported as warnings. Most of these are too small to see in a render, so this is
 their only grade. It runs alongside KRT's `check_weird` (step 4a), which covers
 exact duplicates, dangling copper and removable copper on nets without a zone.
 
@@ -283,7 +286,8 @@ copper.
   yourself from the schematic and the captures, then compare it with the
   routing spec's `critical-nets:` list: a kind the board has and the list
   left out is a finding. For each entry, check it was routed deliberately and
-  locked before the bulk pass, and measure what its L-49 line asks: where
+  laid before the bulk pass, and that no track or via is left locked once the
+  merge rounds are over (L-49), and measure what its L-49 line asks: where
   each Kelvin pair leaves its shunt and how close it runs to a switch node,
   each gate's loop area and length with its return, the reference caps'
   distance to their pins, and the converter interface lengths. Render each
