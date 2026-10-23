@@ -24,7 +24,10 @@ tracks), stored as JSON in the cell's own frame (mm, the IC's centre at 0,0 unle
         Read only. Tries every pose on a grid in the region at each rotation and ranks them: board parts whose
         courtyards the cell's rigid parts hit, other-net board pads within --clearance of the cell's pours,
         vias and outer tracks (both sides), holes, keep-outs and the edge, then other-net vias and tracks
-        under the cell's copper on every layer (a buried sense route counts against the board's inner lanes). Fit the rigid core first; the periphery is re-seated around it afterwards.
+        under the cell's copper on every layer (a buried sense route counts against the board's inner lanes),
+        and board vias within --via-spacing of a cell via. Poses are rejected for: a courtyard off the board,
+        cell copper or vias in the --edge-band (L-38), anything in a --keepout or --protect box, a --fixed part
+        hit, or a cell via crowding a placed cell's via. Fit the rigid core first; the periphery is re-seated around it afterwards.
 
 pcbnew's SaveBoard drops the net classes from the .kicad_pro, so --project copies a project file next to
 the output (pass the source board's).
@@ -354,7 +357,12 @@ def fit(a):
     edge = sps(ps)
     if edge is None:
         sys.exit("fit: the board has no closed Edge.Cuts outline, so poses can't be checked against the edge")
-    inside = edge.buffer(-a.edge_clearance)
+    inside = edge.buffer(-a.edge_clearance)                  # courtyards
+    band = edge.buffer(-a.edge_band)                          # cell copper and vias keep the L-38 edge band
+    fixed = set(a.fixed.split(",")) if a.fixed else set()
+    boxes = lambda L: [sbox(*[float(v) for v in x.split(",")]) for x in (L or [])]
+    PROT, KOB = boxes(a.protect), boxes(a.keepout)
+    ovc = [(net, g.centroid) for (net, g) in ovias]
     T = lambda items: (STRtree([g for _, g in items]) if items else None, items)
     TO = {k: T(v) for k, v in obs.items()}; TH = T(holes); TT = {k: T(v) for k, v in trk.items()}; TV = T(ovias)
     TP = {k: (STRtree([g for _, _, g in v]) if v else None, v) for k, v in padobs.items()}
@@ -385,8 +393,10 @@ def fit(a):
                 for r, (g, sd) in cyd.items():
                     G = affine_transform(g, M)
                     if not inside.contains(G): bad.append(f"{r} off the board")
+                    if any(k.intersects(G) for k in KOB + PROT): bad.append(f"{r} in a keep-out or placed-cell box")
                     for (o, og) in hits(TO[sd], G):
                         if o in free_ok: continue
+                        if o in fixed: bad.append(f"{r} hits fixed {o}")
                         parts.add(o); area += og.intersection(G).area
                     for (o, og) in hits(TH, G):
                         parts.add(o + "(hole)")
@@ -396,11 +406,21 @@ def fit(a):
                 for (ln, net, g) in cu:
                     G = affine_transform(g, M)
                     if any(pp.buffer(0.01).contains(G) for pp in pours.get((net, ln), [])): continue   # the board pours it already
+                    if not band.contains(G): bad.append(f"cell {ln} copper in the edge band")
+                    if any(k.intersects(G) for k in KOB + PROT): bad.append("cell copper in a keep-out or placed-cell box")
                     th[ln] += sum(1 for (on, og) in hits(TT[ln], G) if on != net)
                     vh |= {id(og) for (on, og) in hits(TV, G) if on != net}
+                clash = 0
                 for (net, g) in vias:
                     G = affine_transform(g, M)
-                    if not inside.contains(G): bad.append("a cell via off the board")
+                    if not band.contains(G): bad.append("a cell via in the edge band")
+                    if any(k.intersects(G) for k in KOB + PROT): bad.append("a cell via in a keep-out or placed-cell box")
+                    cpt = G.centroid
+                    for (on, oc) in ovc:            # board vias too close to a cell via (hole-to-hole, drill room)
+                        if on != net and abs(oc.x - cpt.x) < a.via_spacing and abs(oc.y - cpt.y) < a.via_spacing \
+                                and oc.distance(cpt) < a.via_spacing:
+                            clash += 1
+                            if any(k.contains(oc) for k in PROT): bad.append("a cell via within via spacing of a placed cell's via")
                     for ln in TT: th[ln] += sum(1 for (on, og) in hits(TT[ln], G) if on != net)
                     vh |= {id(og) for (on, og) in hits(TV, G) if on != net}
                 th = {k: v for k, v in th.items() if v}
@@ -413,18 +433,19 @@ def fit(a):
                     G = affine_transform(g, M)
                     padparts |= pad_hits("F", G, net) | pad_hits("B", G, net)
                 padparts -= parts
-                res.append(dict(at=(round(X, 2), round(Y, 2)), rot=R, parts=sorted(parts), pads=sorted(padparts), area=round(area, 2), vias=len(vh), tracks=sum(th.values()), by_layer=th,
+                if padparts & fixed: bad.append(f"cell copper on pads of fixed {sorted(padparts & fixed)}")
+                res.append(dict(at=(round(X, 2), round(Y, 2)), rot=R, parts=sorted(parts), pads=sorted(padparts), area=round(area, 2), vias=len(vh), clash=clash, tracks=sum(th.values()), by_layer=th,
                                 bad=bad, dist=round(math.dist((X, Y), pref), 2)))
                 n += 1
             Y += a.step
         X += a.step
     ok = [r for r in res if not r["bad"]]
-    ok.sort(key=lambda r: (len(r["parts"]) + len(r["pads"]), r["area"], r["vias"] + r["tracks"], r["dist"]))
+    ok.sort(key=lambda r: (len(r["parts"]) + len(r["pads"]), r["area"], r["vias"] + r["clash"] + r["tracks"], r["dist"]))
     print(f"{n} poses tried, {len(ok)} on the board and clear of keep-outs; best {min(a.top, len(ok))}:")
     for r in ok[:a.top]:
         print(f"  at {r['at']} rot {r['rot']:>5}: {len(r['parts'])} parts in the way {r['parts']} ({r['area']} mm²), "
               f"pads of {len(r['pads'])} more under cell copper {r['pads']}, "
-              f"{r['vias']} vias and {r['tracks']} tracks under cell copper ({', '.join(f'{k} {v}' for k, v in r['by_layer'].items()) or 'none'}), "
+              f"{r['vias']} vias under cell copper and {r['clash']} within {a.via_spacing} mm of a cell via, {r['tracks']} tracks ({', '.join(f'{k} {v}' for k, v in r['by_layer'].items()) or 'none'}), "
               f"{r['dist']} mm from the preferred spot")
     if a.json: json.dump(ok[:200], open(a.json, "w"), indent=1)
 
@@ -444,6 +465,13 @@ ft.add_argument("--parts", help="the cell's rigid parts (default: all); the rest
 ft.add_argument("--movable", help="board parts you are willing to move; they are not counted in the way")
 ft.add_argument("--top", type=int, default=10); ft.add_argument("--json")
 ft.add_argument("--clearance", type=float, default=0.2, help="mm kept between cell copper and other-net board pads")
-ft.add_argument("--edge-clearance", type=float, default=0.3, help="mm from the board edge that courtyards and cell vias keep")
+ft.add_argument("--edge-clearance", type=float, default=0.3, help="mm from the board edge that courtyards keep")
+ft.add_argument("--edge-band", type=float, default=1.0, help="mm edge band (L-38) that cell copper and vias stay out of")
+ft.add_argument("--fixed", help="board parts that may not move (a placed cell's parts, a mechanically fixed part); a pose hitting one is rejected")
+ft.add_argument("--protect", action="append", help="X0,Y0,X1,Y1 box of an already-placed cell: no cell part, copper or via inside, "
+                "and no cell via within --via-spacing of a via inside it (repeatable)")
+ft.add_argument("--keepout", action="append", help="X0,Y0,X1,Y1 box the cell must stay out of entirely, such as another "
+                "regulator's ground domain (repeatable)")
+ft.add_argument("--via-spacing", type=float, default=0.9, help="mm, centre to centre, between a cell via and any other-net board via")
 a = ap.parse_args()
 {"extract": extract, "build": build, "place": place, "fit": fit}[a.cmd](a)

@@ -122,7 +122,16 @@ Pack them jointly, in this order:
    upstream converter's output, so the intermediate rail is short and doesn't
    cross a hot loop.
 3. **Each placed cell is an obstacle for the next.** Place a cell (`cell.py place`
-   writes a copy) and fit the next cell on that copy.
+   writes a copy) and fit the next cell on that copy, with:
+   - the placed cell's parts as `--fixed`;
+   - its box as `--protect`, so nothing of the new cell lands inside it and no
+     new via comes within `--via-spacing` (0.9 mm, centre to centre) of one of
+     its vias. A pose without this put one cell's entry via 0.16 mm from its
+     neighbour's exit via;
+   - any other regulator's ground domain (an area where the plane under it is a
+     different ground) as `--keepout`.
+
+   Cell copper and vias also stay out of the 1 mm edge band (L-38, `--edge-band`).
 4. **Then the periphery, then the rails.** Draw the rails to the cells' entry and
    exit vias (L-36), and only then seed the rest of the board.
 
