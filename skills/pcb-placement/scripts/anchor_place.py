@@ -32,6 +32,8 @@ a decap names the IC pin it serves; "POSE REF X Y ROT SIDE" seats REF there firs
 FILE (one net name per line, spaces allowed: parts with a pad on that net's routed copper stay).
 
   $KV anchor_place.py select  BOARD --sheets /sheetA/ /sheetB/ --region X0 Y0 X1 Y1 > movable.txt
+                          (locked parts are left out unless --include-locked; place moves any part on the
+                          movable list, locked or not, and keeps its lock flag)
   $KV anchor_place.py classify BOARD --movable movable.txt [--csv roles.csv]
   $KV anchor_place.py rip     BOARD OUT --movable movable.txt --region ... (writes OUT.stubs.json, OUT.nets)
   $KV anchor_place.py place   BOARD OUT --movable movable.txt --region ... [--rounds 3] [--plan plan.csv]
@@ -723,7 +725,7 @@ def cmd_select(a):
     for f in sorted(b.GetFootprints(), key=lambda f: f.GetReference()):
         r = f.GetReference()
         if a.sheets and f.GetSheetname() not in a.sheets: continue
-        if not R.contains(Point(pxy(f))) or f.IsLocked() or r.startswith("TP"): continue
+        if not R.contains(Point(pxy(f))) or (f.IsLocked() and not a.include_locked) or r.startswith("TP"): continue
         if SMALL.match(r) or (r.startswith("U") and SAT_IC.search(f.GetValue()) and len(f.Pads()) <= 10):
             print(r)
 
@@ -1052,6 +1054,7 @@ def main():
         if region: p.add_argument("--region", type=float, nargs=4, required=False)
         return p
     s = common(sp.add_parser("select")); s.add_argument("--sheets", nargs="*")
+    s.add_argument("--include-locked", action="store_true", help="list locked parts too (a placement fix in progress: a lock is a default, not a refusal)")
     s = common(sp.add_parser("classify")); s.add_argument("--csv")
     s = common(sp.add_parser("rip"), out=True); s.add_argument("--keep-nets", help="file of nets whose copper stays (critical paths)")
     s = common(sp.add_parser("place"), out=True); s.add_argument("--rounds", type=int, default=4); s.add_argument("--radius", type=float, default=8.0)

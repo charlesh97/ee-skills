@@ -217,7 +217,8 @@ def place(a):
     if missing: sys.exit(f"cell parts missing on the target: {missing}")
     locked = [r for r in refs if fps[r].IsLocked()]
     if locked and not a.allow_locked:
-        sys.exit(f"locked on the target: {locked}. Moving them needs the owner's yes; rerun with --allow-locked on a copy.")
+        sys.exit(f"locked on the target: {locked}. During a placement fix locks are not a constraint (L-67): "
+                 "rerun with --allow-locked (the output is a copy either way).")
     cellpads = {(r, p.GetNumber()) for r in refs for p in fps[r].Pads()}
     nets = {p.GetNetname() for r in refs for p in fps[r].Pads() if p.GetNetname()}
     private = {n for n in nets if all((p.GetParentFootprint().GetReference(), p.GetNumber()) in cellpads

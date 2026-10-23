@@ -295,6 +295,22 @@ sooner if a round changes nothing, or if what is left is a judgement for the
 human. Then hand back what remains, with refdes and reason. Don't start a third
 round, and don't re-run the whole-board placer to chase a better score.
 
+## 6. Re-placing a board that is already routed
+
+A placement fix on a routed board follows L-64 to L-68:
+
+1. **Strip the current head (L-64).** Keep every footprint, every zone, the critical nets and every pin
+   via with its tap; delete the rest. Never revert to an older routed snapshot once the schematic has moved.
+2. **Run the dead-via pass (L-65).** Delete one-layer signal vias with their stubs, keep pin vias and
+   critical vias, and bridge track ends after any via resize. Re-count capped DRC types by script (L-66).
+3. **Regulator cells first (L-67).** Use the `dcdc-layout` skill: lay each switcher as a checked cell, fit
+   them most-constrained first along the power tree, place them, and clear their areas first (L-68).
+4. **Then subsystem by subsystem.** Each subsystem's parts go to their pins (5a), with a verdict before the
+   next subsystem starts. Locks don't constrain a placement fix: any part may move, locked or not. Pass
+   locked parts as movable (unlock them on the working copy), and lock the subsystem again when its verdict
+   passes.
+5. **Then the rails**, drawn to the cells' and subsystems' entry vias (L-36), and routing (pcb-routing).
+
 ## Handoff
 
 - The board, and whether it replaced the human's or sits beside it.

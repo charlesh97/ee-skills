@@ -863,6 +863,59 @@ corner (49 parts), it cut the local ratsnest from 308 to 108 mm, the routed sign
 the opens from 6 to 3, and cleared the ten parts sitting under through-hole headers. A first run without
 via reservation had left 22 of 51 rail pads with no via room; the old placement left 12.
 
+
+**L-64 Re-place by stripping the current head, never by reverting to a snapshot.** *(draft, 2026-10-23,
+from re-placing a routed 6-layer motor-driver board.)* When placement has to be redone on a board that is
+already routed, strip its current revision. Keep every footprint, every zone (planes and rail shapes), all
+copper on the routing spec's critical-net list, and every pin via with its tap (L-39). Delete every other
+track and via. Don't go back to an older routed snapshot once the schematic has moved since it. Parts
+removed or swapped, package changes and net renames all live in the head, and an old board brings back
+footprints and nets that no longer exist. Check the strip the same way as any other change: parity
+unchanged, ERC unchanged, and the only new DRC types are via_dangling, starved_thermal and
+isolated_copper (no clearance, no short). On that board the strip took out 2213 tracks and 210 vias,
+kept 921 critical tracks, 141 critical vias and 1102 pin vias, and parity stayed at 4.
+
+**L-65 After a strip or a via-size change, run a dead-via pass with bridges.** *(draft, 2026-10-23.)*
+Delete every signal via whose copper is now on one layer only, because its route is gone, and delete its
+tap and stub tracks with it. Keep critical-net vias, live vias (copper on two or more layers), and L-39
+pin vias on power and ground nets that are not live yet, because the rails are drawn again after
+placement. When a via class shrinks (0.6/0.3 to 0.3/0.15, say), track ends that sat on the old ring off
+centre, up to 0.3 mm, are left dangling. Give each one a short bridge segment to the new via's centre, at
+the track's width and on its layer. It lies inside copper the old ring and the track end already covered,
+so it adds no clearance. On the motor-driver board this deleted 157 dead vias and 265 stubs, resized 143
+signal vias with 109 bridges, and added no DRC item.
+
+**L-66 A DRC count at a report cap is a cap, not a count.** *(draft, 2026-10-23.)* KiCad 10's DRC JSON
+stops each violation type at 199 entries and the unconnected list at 499. A `via_dangling` of 199 or an
+unconnected count of 499 says "at least". Count those with a script (`GetConnectivity()`, or by walking
+the items) before quoting a number or calling a change neutral. On the motor-driver board the
+strip's report read via_dangling 199, which was only the cap. The true number was unknown until the dead-via
+pass brought it under the cap, at 146.
+
+**L-67 Regulator cells first, then placement subsystem by subsystem; locks don't constrain a placement
+fix.** *(draft, 2026-10-23.)* On a new placement or a re-placement, every switching regulator goes on
+first as a checked cell (L-11, the `dcdc-layout` skill), packed most-constrained first along the power
+tree. Then the board is placed subsystem by subsystem, each one's parts to their pins (L-61), with a
+verdict for each subsystem before the next starts. During a placement fix, a lock records that a part
+was placed. It is not a constraint: any part may move, locked or not, and the subsystem's owner moves it.
+Lock a subsystem again once its verdict passes. A part frozen by an old lock is how a known-bad placement
+survives a review.
+
+**L-68 Clear the area before a block lands on it, then check every via's net.** *(draft, 2026-10-23.)* A
+block placed onto a board (a regulator cell, a copied subsystem) brings vias and pours. Where the area is
+not clear, a block via that lands on a pad still there takes that pad's net at the save. Old board vias
+inside the block's pour take the pour's net. DRC reports only a dangling via or an open (L-55). So:
+
+- move the parts out first;
+- remove other-net copper on every layer under the block, inner layers included, because a buried sense
+  route crosses inner lanes;
+- merge the block's pours into same-net board pours they overlap, never stacking a second zone (L-23);
+- after placing, compare every block via's net with the block's spec.
+
+`dcdc-layout`'s `cell.py fit` counts the copper in the way per layer, and `cell.py place` merges the
+pours. On the motor-driver board, one regulator's 5 V exit via came back on the neighbouring regulator's
+output net, because that regulator's inductor was still under it.
+
 ---
 
 ## Flex
